@@ -7,15 +7,22 @@ from async_communication import AsyncCommunication
 RANDOM_SEED = 42
 SIM_TIME = 100
 
-class NetConsumer:
+class NetworkLoad:
     """ A simulation of a communicating electrical network consumer.
     """
-    def __init__(self):
+    def __init__(self, remote_host='127.0.0.1', remote_port='5555', local_port=None):
         self.env = simpy.Environment()
         self.comm = AsyncCommunication()
         self.comm.start()
-        self.remote_host = '127.0.0.1'
-        self.remote_port = '5555'
+        if local_port is not None:
+            self.comm.run_server(callback=self.process_allocation, tcp_port=local_port)
+        self.remote_host = remote_host
+        self.remote_port = remote_port
+
+    def process_allocation(self, data):
+        print(data['msg'].decode('utf16'))
+        allocation=data['msg'].decode('utf16').split()
+        self.scheduler(load=allocation[0], duration=allocation[1])
 
     def scheduler(self, load=None, duration=None):
         """
@@ -29,7 +36,7 @@ class NetConsumer:
         if duration is None:
             duration = randint(5, 10) * .1
 
-        proc = self.env.process(self.consume(p_kw, duration))
+        proc = self.env.process(self.create_load(p_kw, duration))
         self.env.run(until=proc)
 
     def report_load(self, load, duration):
@@ -48,42 +55,44 @@ class NetConsumer:
 
         
 
-class NetAllocator:
+class NetworkAllocator:
     """ Simulate a communicating policy allocator
     """
     def __init__(self):
         self.env = simpy.Environment()
         self.comm = AsyncCommunication()
+        self.comm.start()
 
     def bootstrap(self):
-        self.net = pp.create_empty_network()
+        net = pp.create_empty_network()
 
-        #create buses
-        bus1 = pp.create_bus(self.net, vn_kv=220.)
-        bus2 = pp.create_bus(self.net, vn_kv=110.)
-        bus3 = pp.create_bus(self.net, vn_kv=110.)
-        bus4 = pp.create_bus(self.net, vn_kv=110.)
+        # create buses
+        bus1 = pp.create_bus(net, vn_kv=220.)
+        bus2 = pp.create_bus(net, vn_kv=110.)
+        bus3 = pp.create_bus(net, vn_kv=110.)
+        bus4 = pp.create_bus(net, vn_kv=110.)
 
-        #create 220/110 kV transformer
-        pp.create_transformer(self.net, bus1, bus2, std_type="100 MVA 220/110 kV")
+        # create 220/110 kV transformer
+        pp.create_transformer(net, bus1, bus2, std_type="100 MVA 220/110 kV")
 
-        #create 110 kV lines
-        pp.create_line(self.net, bus2, bus3, length_km=70., std_type='149-AL1/24-ST1A 110.0')
-        pp.create_line(self.net, bus3, bus4, length_km=50., std_type='149-AL1/24-ST1A 110.0')
-        pp.create_line(self.net, bus4, bus2, length_km=40., std_type='149-AL1/24-ST1A 110.0')
+        # create 110 kV lines
+        pp.create_line(net, bus2, bus3, length_km=70., std_type='149-AL1/24-ST1A 110.0')
+        pp.create_line(net, bus3, bus4, length_km=50., std_type='149-AL1/24-ST1A 110.0')
+        pp.create_line(net, bus4, bus2, length_km=40., std_type='149-AL1/24-ST1A 110.0')
 
-        #create loads
-        pp.create_load(self.net, bus2, p_kw=60e3, controllable = False)
-        pp.create_load(self.net, bus3, p_kw=70e3, controllable = False)
-        pp.create_load(self.net, bus4, p_kw=100e3, controllable = False)
+        # create loads
+        pp.create_load(net, bus2, p_kw=60e3, controllable=False)
+        pp.create_load(net, bus3, p_kw=70e3, controllable=False)
+        pp.create_load(net, bus4, p_kw=10e3, controllable=False)
 
-        #create generators
-        eg = pp.create_ext_grid(self.net, bus1)
-        g0 = pp.create_gen(self.net, bus3, p_kw=-80*1e3, min_p_kw=-80e3, max_p_kw=0,vm_pu=1.01, controllable=True)
-        g1 = pp.create_gen(self.net, bus4, p_kw=-100*1e3, min_p_kw=-100e3, max_p_kw=0, vm_pu=1.01, controllable=True)
-        costeg = pp.create_polynomial_cost(self.net, 0, 'ext_grid', np.array([1, 0]))
-        costgen1 = pp.create_polynomial_cost(self.net, 0, 'gen', np.array([1, 0]))
-        costgen2 = pp.create_polynomial_cost(self.net, 1, 'gen', np.array([1, 0]))
+        # create generators
+        eg = pp.create_ext_grid(net, bus1, min_p_kw=-1e9, max_p_kw=1e9)
+        g0 = pp.create_gen(net, bus3, p_kw=-80 * 1e3, min_p_kw=-80e3, max_p_kw=0, vm_pu=1.01, controllable=True)
+        g1 = pp.create_gen(net, bus4, p_kw=-100 * 1e3, min_p_kw=-100e3, max_p_kw=0, vm_pu=1.01, controllable=True)
+
+        costeg = pp.create_polynomial_cost(net, 0, 'ext_grid', np.array([-1, 0]))
+        costgen1 = pp.create_polynomial_cost(net, 0, 'gen', np.array([-1, 0]))
+        costgen2 = pp.create_polynomial_cost(net, 1, 'gen', np.array([-1, 0]))
 
     def optimize_pf(self):
         pp.runopp(self.net, verbose=True)
@@ -92,13 +101,13 @@ class NetAllocator:
     def schedule(self):
         while True:
             self.optimize_pf()
-            yield self.env.timeout(0)
+            yield self.env.timeout(10)
 
 
 def main():
-    consumer = NetConsumer()
-    producer = NetProducer()
-    allocator = NetAllocator()
+    consumer = NetworkLoad()
+    generator = NetworkLoad(local_port=5000)
+    allocator = NetworkAllocator(local_port=5555)
 
 if __name__ == "__main__":
     main()

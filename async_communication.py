@@ -14,13 +14,16 @@ from threading import Event as ThreadEvent
 logger = logging.getLogger(__name__)
 
 class AsyncCommunication(threading.Thread):
-    def __init__(self):
+    def __init__(self, identity=None):
 
         self._target_address = None  # type:str
         self._receive_callback = None
         self._log = logging.getLogger(__name__)
 
         name = 'AsyncCommThread'
+        self.identity=identity
+        if identity:
+            name = name+identity
 
         self.context = None
         self.cliSocket = None
@@ -50,16 +53,14 @@ class AsyncCommunication(threading.Thread):
             self.cliSocket.close()
             self.cliSocket = self.context.socket(zmq.DEALER)
 
-
-        #identity = u'client'
-        #self.cliSocket.identity = identity.encode('ascii')
+        if self.identity is not None:
+            self.cliSocket.setsockopt_unicode(zmq.IDENTITY, self.identity, 'utf16')
         if inproc_address is not None:
             socket_address = inproc_address
         else:
             if not (tcp_host and tcp_port):
-                msg = 'You must either use create socket with both tcp port and tcp_host' \
-                      'either with inproc address.'
-                self.executor.submit(logger.critical, msg)
+                msg = 'no socket_address or inproc_address provided'
+                self.executor.submit(print, msg)
                 raise ValueError(msg)
             else:
                 socket_address = 'tcp://{t}:{p}'.format(t=tcp_host, p=tcp_port)
@@ -72,8 +73,10 @@ class AsyncCommunication(threading.Thread):
         retries = self.retries
         while retries > 0:
             self.executor.submit(print,'sending')
-            await self.cliSocket.send_multipart([str(request).encode('ascii')])
+            await self.cliSocket.send_multipart([str(request).encode('utf16')])
             items = dict(await self.poller.poll(self.timeout))
+            break
+            #TODO Wait for response after client send
             if items.get(self.cliSocket) == zmq.POLLIN:
                 self.executor.submit(print, 'received ack')
                 msg = await self.cliSocket.recv_multipart()
@@ -99,12 +102,11 @@ class AsyncCommunication(threading.Thread):
         while True:
             items = dict(await self.poller.poll(self.timeout))
             if self.srvSocket in items and items[self.srvSocket] == zmq.POLLIN:
-                #ident, msg = self.srvSocket.recv_multipart()
-                msg = await self.srvSocket.recv_multipart()
-                self.executor.submit(print, 'server received', msg)
-                await self.srvSocket.send_multipart(msg)
-                self.executor.submit(callback, msg)
-
+                ident, msg = await self.srvSocket.recv_multipart()
+                self.executor.submit(print, 'server received {} from {}'.format(msg, ident))
+                self.executor.submit(callback, {'ident': ident, 'msg': msg})
+                #TODO respond after server receive
+                # await self.srvSocket.send_multipart(msg)
 
     def run_server(self,callback=None, tcp_port=None, inproc_address=None):
         if not (tcp_port or inproc_address):
