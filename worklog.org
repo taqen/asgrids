@@ -1,0 +1,142 @@
+#+STARTUP: INLINEIMAGES
+#+TITLE Logging Development Progress on the Simulator
+#+begin_src python :session SINS
+#+end_src
+
+* Preliminary Architecture
+In order to model the operation of a smart grid, the simulator needs to operates asynchronously on a distributed architecture.
+As a consequence a multi-agent design paradigm is probably a good way to describe it.
+
+** The Generic Agent 
+
+#+begin_src plantuml :file ./sim_arch.png :exports results
+!definelong AGENT(name)
+skinparam linetype ortho
+component name {
+component Scheduler as name.S
+component AsyncComms as name.C
+interface Consume as name.consume
+interface Produce as name.produce
+name.S <..> name.C : use
+name.S -left-> name.consume
+name.S -right-> name.produce
+}
+!enddefinelong
+AGENT(Agent)
+#+end_src
+
+#+RESULTS:
+[[file:./sim_arch.png]]
+
+#+begin_src python :results output :session SINS
+import simpy
+import numpy as np
+from async_communication import AsyncCommunication
+
+class Agent:
+  """ A generic Network Agent.
+  """
+  def __init__(self, local=None, env=None):
+    self.local = local
+    if env is None:
+      self.env = simpy.Environment()
+    else:
+      self.env = env
+    self.comm = AsyncCommunication()
+
+  def act(self):
+    """ generates a production/consumption event
+    """
+    pass
+#+end_src
+
+#+RESULTS:
+: Python 3.7.0 (default, Jun 28 2018, 13:15:42) 
+: [GCC 7.2.0] :: Anaconda, Inc. on linux
+: Type "help", "copyright", "credits" or "license" for more information.
+: python.el: native completion setup loaded
+
+#+begin_src plantuml :file ./sim_states.png :export results
+skinparam linetype ortho
+!definelong OPERATION(name)
+[*] -> name##_OFF
+name##_OFF -d-> name##_ON : start_##name
+name##_ON -> name##_OFF : end_##name
+!enddefinelong
+
+state Communicating {
+OPERATION(TX)
+--
+OPERATION(RX)
+}
+
+state Scheduling {
+OPERATION(Production)
+--
+OPERATION(Consumption)
+}
+#+end_src
+
+#+RESULTS:
+[[file:./sim_states.png]]
+
+* The Allocator Agent
+Contains the standard facilities of Scheduling and Communicating, wrapped around simpy and AsyncCommunication.
+The allocator doesn't consume or produce per se, but generates production and consumption profiles corresponding for network elements (generators, loads ... etc).
+The class definition bellow
+
+#+begin_src plantuml :file alloc_agent_seq.png
+box "Agent Allocator"
+participant Scheduling as Alloc_Sched
+participant Communicating as Alloc_Comm
+end box
+box "Agent 1"
+participant Communicating as Agent_Comm
+participant Scheduling as Agent_Sched
+end box
+Alloc_Sched -> Alloc_Comm: Schedule Operation
+Alloc_Comm -> Agent_Comm: Schedule Operation
+Agent_Comm -> Agent_Sched: Schedule Operation
+Agent_Sched -> Agent_Comm: Report Operation
+Agent_Comm -> Alloc_Comm: Report Operation
+Alloc_Comm -> Alloc_Sched: Report Operation
+#+end_src
+
+#+RESULTS:
+[[file:alloc_agent_seq.png]]
+
+ 
+#+begin_src python :results output :session SINS
+import pandapower as pp
+from random import randint
+from uuid import uuid4
+
+class NetworkLoad(Agent):
+  def __init__(self, remote='127.0.0.1:5555', local='*:5000'):
+    self.env = simpy.Environment()
+    self.comm = AsyncCommunication()
+    self.remote = remote
+    self.local = local
+
+  def process_allocation(self, data):
+    print(data['msg'].decode('utf16'))
+    allocation=data['msg'].decode('utf16').split()
+    self.scheduler(load=allocation[0], duration=allocation[1])
+
+  #TODO Scheduler should submit processes to the future (wraping env.timeout and env.process?)
+  def schedule(self, load=None, duration=None):
+    """
+    Schedule a consumption event for the specified load/duration, or generate random load/duration
+    :param load:
+    :param duration:
+    """
+    proc = self.env.process(self.create_load(p_kw, duration))
+    self.env.schedule(proc, delay=0)
+
+
+#+end_src
+
+# Local Variables:
+# org-babel-default-header-args:python: ((:results . "output") (:exports . "code") (:cache))
+# org-babel-python-command: "/home/taqi/anaconda3/envs/sim/bin/python"
+# End:
