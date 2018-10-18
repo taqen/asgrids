@@ -1,4 +1,5 @@
 #+STARTUP: INLINEIMAGES
+#+STARTUP: hideblocks
 # Local Variables:
 # org-babel-default-header-args:python: ((:results . "output") (:exports . "code") (:cache))
 # End:
@@ -6,10 +7,6 @@
 (pyvenv-workon "sim")
 (setq python-shell-completion-native-enable nil)
 #+end_src
-
-#+RESULTS:
-
-#+TITLE Logging Development Progress on the Simulator
 #+begin_src python :session SINS
 import simpy
 import numpy as np
@@ -19,6 +16,9 @@ from random import randint
 from uuid import uuid4
 #+end_src
 
+#+RESULTS:
+
+#+TITLE Logging Development Progress on the Simulator
 #+RESULTS:
 
 * Preliminary Architecture
@@ -47,22 +47,22 @@ AGENT(Agent)
 [[file:./sim_arch.png]]
 
 #+begin_src python :results output :session SINS
-  class Agent:
-    """ A generic Network Agent.
-    """
-    def __init__(self, local=None, env=None):
-      self.local = local
-      if env is None:
-        self.env = simpy.Environment()
-      else:
-        self.env = env
-      self.comm = AsyncCommunication()
+class Agent:
+  """ A generic Network Agent.
+  """
+  def __init__(self, local=None, env=None):
+    self.local = local
+    if env is None:
+      self.env = simpy.Environment()
+    else:
+      self.env = env
+    self.comm = AsyncCommunication()
 
-    def schedule(self, time, action):
-      """ generates a production/consumption event
-      """
-      p = self.env.process(action, delay=time)
-      return p
+  def schedule(self, time, action):
+    """ generates a production/consumption event
+    """
+    p = self.env.process(action, delay=time)
+    return p
 #+end_src
 
 #+RESULTS:
@@ -166,6 +166,7 @@ class NetworkAllocator(Agent):
 
 ** The Network Load Agent
 #+begin_src plantuml :file load_class_diag.png
+title **NetworkLoad class diagram**
 class Agent {
   schedule()
 }
@@ -180,6 +181,25 @@ Agent <|-- NetworkLoad
 #+RESULTS:
 [[file:load_class_diag.png]]
 
+#+begin_src plantuml :file sequence_txrx.png
+title **Allocator-Agent interaction sequence-chart**
+collections Allocator as A
+collections Agent as B
+A -> B: Beacon
+B -> A: Join
+A -> B: Joined
+B -> A: Ack
+A -> B: Allocation
+B -> A: Ack
+A -> B: ...
+B -> A: ...
+A -> B: Allocation
+B -> A: Ack
+#+end_src
+
+#+RESULTS:
+[[file:sequence_txrx.png]]
+
 #+begin_src python :results output :session SINS
 class NetworkLoad(Agent):
   def __init__(self, remote='127.0.0.1:5555', local='*:5000'):
@@ -188,17 +208,18 @@ class NetworkLoad(Agent):
     self.remote = remote
     self.local = local
  
-  def receive_handle(self, data):
-    allocation, duration=data['msg'].decode('utf16').split()
-    self.schedule(time=0, action=report_allocation(allocation))
+  def receive_handle(self, data, src):
+    
+    allocation, duration=data['msg']
+    self.schedule(time=0, action=send_ack(allocation, dst=src))
     self.schedule(time=0, action=allocation_handle(allocation, duration))
   
   def allocation_handle(self, allocation, duration):
     yield self.env.timeout(duration)
 
-  def report_allocation(self, allocation):
-    pass
-
+  def send_ack(self, allocation):
+    packet={"allocation_id" : allocation['allocation_id'], "msg_type": "allocation_ack"}
+    self.comm.send(packet)
 #+end_src
 
 #+RESULTS:
