@@ -1,33 +1,28 @@
+#+TITLE Logging Development Progress on the Simulator
 #+STARTUP: INLINEIMAGES
 #+STARTUP: hideblocks
-# Local Variables:
-# org-babel-default-header-args:python: ((:results . "output") (:exports . "code") (:cache))
-# End:
-#+begin_src emacs-lisp :session SINS
+#+begin_src emacs-lisp :session SINS :exports none :results none
 (pyvenv-workon "sim")
 (setq python-shell-completion-native-enable nil)
 #+end_src
-#+begin_src python :session SINS
+#+begin_src python :tangle ./sins.py :session SINS :results none :exports none
 import simpy
-import numpy as np
 from async_communication import AsyncCommunication
-import pandapower as pp
-from random import randint
-from uuid import uuid4
 #+end_src
 
-#+RESULTS:
-
-#+TITLE Logging Development Progress on the Simulator
-#+RESULTS:
 
 * Preliminary Architecture
 In order to model the operation of a smart grid, the simulator needs to operates asynchronously on a distributed architecture.
 As a consequence a multi-agent design paradigm is probably a good way to describe it.
 
 ** The Generic Agent 
+The generic agent translates to the basic class the implements the basic behavior of running an endless event loop (see <<generic_agent>>), and processing actions as they are scheduled.
+The Agent interacts with the outside world through AsyncComms interface. This interface is implmented through various child classes the inherit from the Agent.
+The interaction between the scheduling and AsyncComms interface is as can be seen in <<agents_seq>>.
+The code block <<generic_agent_src>> shows an implementation of such an Agent.
 
-#+begin_src plantuml :file ./sim_arch.png :exports results
+#+NAME: generic_agent
+#+begin_src plantuml :file ./generic_agent.png :exports results :exports none
 !definelong AGENT(name)
 skinparam linetype ortho
 component name {
@@ -43,55 +38,42 @@ name.S -right-> name.produce
 AGENT(Agent)
 #+end_src
 
-#+RESULTS:
-[[file:./sim_arch.png]]
+#+RESULTS: generic_agent
+[[file:./generic_agent.png]]
 
-#+begin_src python :results output :session SINS
+
+#+NAME: generic_agent_src
+#+begin_src python :results none :tangle ./sins.py :session SINS
 class Agent:
   """ A generic Network Agent.
   """
-  def __init__(self, local=None, env=None):
-    self.local = local
+  def __init__(self, env=None):
     if env is None:
       self.env = simpy.Environment()
     else:
       self.env = env
-    self.comm = AsyncCommunication()
+    self.stop = False
+    self.env.process(self.run())
+    self.env.run()
+
+  def run(self):
+    while not self.stop:
+      #self.env.process(self.run)
+      yield self.env.timeout(10)
 
   def schedule(self, time, action):
     """ generates a production/consumption event
     """
     p = self.env.process(action, delay=time)
     return p
+
+  def stop(self):
+    self.stop = True
+    
 #+end_src
 
-#+RESULTS:
-
-#+begin_src plantuml :file ./sim_states.png :export results
-skinparam linetype ortho
-!definelong OPERATION(name)
-[*] -> name##_OFF
-name##_OFF -d-> name##_ON : start_##name
-name##_ON -> name##_OFF : end_##name
-!enddefinelong
-
-state Communicating {
-OPERATION(TX)
---
-OPERATION(RX)
-}
-
-state Scheduling {
-OPERATION(Production)
---
-OPERATION(Consumption)
-}
-#+end_src
-
-#+RESULTS:
-[[file:./sim_states.png]]
-
-#+begin_src plantuml :file alloc_agent_seq.png
+#+NAME: agents_seq
+#+begin_src plantuml :exports none :file agents_seq.png
 box "Agent Allocator"
 participant Scheduling as Alloc_Sched
 participant Communicating as Alloc_Comm
@@ -108,19 +90,15 @@ Agent_Comm -> Alloc_Comm: Report Operation
 Alloc_Comm -> Alloc_Sched: Report Operation
 #+end_src
 
-#+RESULTS:
-[[file:alloc_agent_seq.png]]
-
-
-#+RESULTS:
-[[file:class_diag.png]]
-
+#+RESULTS: agents_seq
+[[file:agents_seq.png]]
 
 ** The Allocator Agent
 Contains the standard facilities of Scheduling and Communicating, wrapped around simpy and AsyncCommunication.
 The allocator doesn't consume or produce per se, but generates production and consumption profiles corresponding for network elements (generators, loads ... etc).
 The class definition bellow
-#+begin_src plantuml :file alloc_class_diag.png
+#+NAME allocator
+#+begin_src plantuml :exports none :file allocator.png
 class Agent {
   schedule()
 }
@@ -134,20 +112,26 @@ Agent <|-- NetworkAllocator
 #+end_src 
 
 #+RESULTS:
-[[file:alloc_class_diag.png]]
+[[file:allocator.png]]
 
-
-#+begin_src python :results output :session SINS
+#+NAME: allocator_src
+#+begin_src python :tangle ./sins.py :results none :session SINS
 class NetworkAllocator(Agent):
   """ Simulate a communicating policy allocator
   """
-  def __init__(self):
+  def __init__(self, local='*:5555'):
     self.loads = {}
+    self.comm = AsyncCommunication()
+    self.comm.run_server(callback=self.receive_handle, local_address=local)
+    self.comm.start()
+    self.local = local
     super(NetworkAllocator, self).__init__()
 
   def initlise(self):
     pass
 
+  def receive_handle(self, data, src):
+    pass
   def add_load(self, load):
     self.loads[load['id']] = load
 
@@ -155,17 +139,20 @@ class NetworkAllocator(Agent):
     self.loads.popitem(id)
 
   def send_allocation(self, id , allocation):
-    pass
-
-  def run(self):
     self.schedule(action = send_allocation(id, allocation))
+
+  def stop(self):
+    self.env.process(self.comm.stop())
+    self.env.process(super(NetworkAllocator, self).stop())
      
 #+end_src
 
-#+RESULTS:
-
 ** The Network Load Agent
-#+begin_src plantuml :file load_class_diag.png
+The Network Load models the behavior of an Agent that can handle Allocator commands to consume/produce specific allocations.
+It inherits from the Generic Agents and interfaces with the outside world through the AsyncCommunication class.
+
+#+NAME: load
+#+begin_src plantuml :file load.png
 title **NetworkLoad class diagram**
 class Agent {
   schedule()
@@ -173,15 +160,35 @@ class Agent {
 class NetworkLoad {
   schedule()
   process_allocation()
-  report_allocation()
+  receive_handle()
+  allocation_handle()
+  send_ack()
+  stop()
 }
 Agent <|-- NetworkLoad
 #+end_src 
 
-#+RESULTS:
-[[file:load_class_diag.png]]
+#+RESULTS: load
+[[file:load.png]]
 
-#+begin_src plantuml :file sequence_txrx.png
+#+NAME: load_state
+#+begin_src plantuml :exports none :file load_state_diag.png
+[*] -> run_loop
+run_loop -d-> run_loop : no event
+run_loop -d-> receive_handle: AsyncComm packet
+receive_handle -> allocation_handle: packet is allocation
+receive_handle -> run_loop: invalid packet \n join_ack packet
+allocation_handle -> send_ack: allocation processed
+allocation_handle -> run_loop: allocation not processed
+send_ack -> run_loop: packet processed
+run_loop -u-> [*]: stop event
+
+#+end_src
+
+#+RESULTS: load_state
+[[file:load_state_diag.png]]
+
+#+begin_src plantuml :exports none :file sequence_txrx.png
 title **Allocator-Agent interaction sequence-chart**
 collections Allocator as A
 collections Agent as B
@@ -200,26 +207,41 @@ B -> A: Ack
 #+RESULTS:
 [[file:sequence_txrx.png]]
 
-#+begin_src python :results output :session SINS
-class NetworkLoad(Agent):
-  def __init__(self, remote='127.0.0.1:5555', local='*:5000'):
-    self.env = simpy.Environment()
-    self.comm = AsyncCommunication()
-    self.remote = remote
-    self.local = local
+#+NAME: load_src
+#+begin_src python :tangle ./sins.py :results none :session SINS
+  class NetworkLoad(Agent):
+    def __init__(self, remote='127.0.0.1:5555', local='*:5000'):
+      self.remote = remote
+      self.local = local
+      self.id=self.local
+      self.comm = AsyncCommunication(identity=self.id)
+      self.comm.run_server(callback=self.receive_handle, local_address=local)
+      self.comm.start()
+      super(NetworkLoad, self).__init__()
+
+    def receive_handle(self, data, src):
+      msg_type = data['msg_type']
+      if msg_type == 'ack':
+        return
+      if msg_type == 'allocation':
+        allocation = data['allocation']
+        duration = data['duration']
+        self.schedule(time=0, action=send_ack(allocation, dst=src))
+        self.schedule(time=0, action=allocation_handle(allocation, duration))
  
-  def receive_handle(self, data, src):
-    
-    allocation, duration=data['msg']
-    self.schedule(time=0, action=send_ack(allocation, dst=src))
-    self.schedule(time=0, action=allocation_handle(allocation, duration))
-  
-  def allocation_handle(self, allocation, duration):
-    yield self.env.timeout(duration)
+    def allocation_handle(self, allocation, duration):
+      yield self.env.timeout(duration)
 
-  def send_ack(self, allocation):
-    packet={"allocation_id" : allocation['allocation_id'], "msg_type": "allocation_ack"}
-    self.comm.send(packet)
+    def join_ack_handle(self):
+      pass
+
+    def send_join(self):
+      packet={'msg_type':'join', 'id':self.id}
+    def send_ack(self, allocation):
+      packet={"allocation_id" : allocation['allocation_id'], "msg_type": "allocation_ack"}
+      self.comm.send(packet, remote=self.remote)
+
+    def stop(self):
+      self.env.process(self.comm.stop())
+      self.env.process(super(NetworkLoad, self).stop())
 #+end_src
-
-#+RESULTS:
