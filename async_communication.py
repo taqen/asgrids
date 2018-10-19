@@ -45,7 +45,7 @@ class AsyncCommunication(threading.Thread):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    async def _send(self, request, inproc_address = None, tcp_host = None, tcp_port = None):
+    async def _send(self, request, remote = None):
         if self.cliSocket is None:
             self.cliSocket = self.context.socket(zmq.DEALER)
         else:
@@ -54,48 +54,20 @@ class AsyncCommunication(threading.Thread):
             self.cliSocket = self.context.socket(zmq.DEALER)
 
         if self.identity is not None:
-            self.cliSocket.setsockopt_unicode(zmq.IDENTITY, self.identity, 'utf16')
-        if inproc_address is not None:
-            socket_address = inproc_address
+            self.cliSocket.setsockopt(zmq.IDENTITY, msgpack.packb(self.identity))
+        if not remote:
+            msg = 'no socket_address provided'
+            self.executor.submit(print, msg)
+            raise ValueError(msg)
         else:
-            if not (tcp_host and tcp_port):
-                msg = 'no socket_address or inproc_address provided'
-                self.executor.submit(print, msg)
-                raise ValueError(msg)
-            else:
-                socket_address = 'tcp://{t}:{p}'.format(t=tcp_host, p=tcp_port)
-                self.executor.submit(print, 'sending ' + request + ' to ' + socket_address)
+            socket_address = 'tcp://{}'.format(remote)
+            self.executor.submit(print, 'sending ' + request + ' to ' + socket_address)
 
         self.cliSocket.connect(socket_address)
         self.poller.register(self.cliSocket, zmq.POLLIN)
 
-        reply = None
-        retries = self.retries
-        while retries > 0:
-            self.executor.submit(print,'sending')
-            await self.cliSocket.send_multipart([str(request).encode('utf16')])
-            items = dict(await self.poller.poll(self.timeout))
-            break
-            #TODO Wait for response after client send
-            if items.get(self.cliSocket) == zmq.POLLIN:
-                self.executor.submit(print, 'received ack')
-                msg = await self.cliSocket.recv_multipart()
-                reply = msg
-                break
-            else:
-                self.executor.submit(print, 'client socket timeout')
-                if retries:
-                    self.executor.submit(print, 'retrying')
-                    self.poller.unregister(self.cliSocket)
-                    self.cliSocket.close()
-                    self.cliSocket = self.context.socket(zmq.DEALER)
-                    self.cliSocket.connect(socket_address)
-                    self.poller.register(self.cliSocket, zmq.POLLIN)
-                else:
-                    break
-                #retries -= 1
-
-        #yield reply
+        self.executor.submit(print,'sending')
+        await self.cliSocket.send_multipart(msgpack.packb(request))
 
     async def _run_server(self, callback=None):
         self.executor.submit(print, 'running server')
@@ -103,30 +75,31 @@ class AsyncCommunication(threading.Thread):
             items = dict(await self.poller.poll(self.timeout))
             if self.srvSocket in items and items[self.srvSocket] == zmq.POLLIN:
                 ident, msg = await self.srvSocket.recv_multipart()
+                msg = msgpack.unpackb(msg, encoding='utf-8')
+                ident = msgpack.unpackb(ident, encoding='utf-8')
                 self.executor.submit(print, 'server received {} from {}'.format(msg, ident))
-                self.executor.submit(callback, {'ident': ident, 'msg': msg})
+                self.executor.submit(callback, data=msg, src=ident)
                 #TODO respond after server receive
                 # await self.srvSocket.send_multipart(msg)
+            if self.cliSocket in items and items[self.cliSocket] == zmq.POLLIN:
+                ident, msg = await self.cliSocket.recv_multipart()
+                self.executor.submit(print, 'received ack at client socket')
+                #TODO Should this be further handled?
+                msg = msgpack.unpackb(msg, encoding='utf-8')
+                ident = msgpack.unpackb(ident, encoding='utf-8')
+                self.executor.submit(callback, data=msg, src=ident)
 
-    def run_server(self,callback=None, tcp_port=None, inproc_address=None):
-        if not (tcp_port or inproc_address):
-            msg = 'At least TCP or INPROC must be used with ListeningThread.'
+    def run_server(self,callback=None, local_address=None):
+        if not (local_address):
+            msg = 'At least TCP address must be used.'
             self.executor.submit(logger.critical, msg)
             raise ValueError(msg)
-        if tcp_port and inproc_address:
-            msg = 'Use either TCP either INPROC with ListeningThread, not both.'
-            self.executor.submit(logger.critical, msg)
-            raise ValueError(msg)
-
-        self.executor.submit(print,'Server listening on port {!r}.'.format(tcp_port))
+        if self.identity is None:
+            self.identity = local_address.encode()
+        self.executor.submit(print,'Server listening on address tcp://{}.'.format(local_address))
 
         self.srvSocket = self.context.socket(zmq.ROUTER)
-        if inproc_address:
-            self.srvSocket.bind(inproc_address)
-        elif tcp_port:
-            self.srvSocket.bind('tcp://*:{}'.format(tcp_port))
-        else:
-            exit(1) #TODO: do not exit without cleaning up
+        self.srvSocket.bind('tcp://{}'.format(local_address))
 
         self.poller.register(self.srvSocket, zmq.POLLIN)
 
@@ -134,9 +107,9 @@ class AsyncCommunication(threading.Thread):
             self._run_server(callback=callback), self.loop)
 
 
-    def send(self, request, inproc_address = None, tcp_host = None, tcp_port = None):
+    def send(self, request, remote = None):
         asyncio.run_coroutine_threadsafe(
-            self._send(request, inproc_address=inproc_address, tcp_host=tcp_host, tcp_port=tcp_port), self.loop)
+            self._send(request, remote=remote), self.loop)
 
 
     def stop(self):
