@@ -40,22 +40,16 @@ class Agent:
 
         """
         print("scheduling action {}".format(action))
-        p = self.env.process(self.process(action=action, args=args, time=time))
-        #if self.running is not None:
-        #    self.running.interrupt()
-        #    p.callbacks = {lambda e: self.env.process(self._run())}
-        return p
+        return self.env.process(
+            self.process(action=action, args=args, time=time))
 
     def process(self, action, args, time=0):
-        print("now = %d" % self.env.now)
         yield self.env.timeout(time)
-        print("now = %d" % self.env.now)
-        print("executing action {}".format(action))
+        print("executing action {} after {} seconds".format(action, time))
         if args is None:
             action()
         else:
             action(**args)
-        print("exceuted")
 
     def stop(self):
         """ stop the Agent by stop the local simpy environment.
@@ -70,13 +64,15 @@ class Agent:
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
 
-    def __init__(self, local='*:5555'):
+    def __init__(self, local='*:5555', env=None):
         self.local = local
         self.comm = AsyncCommunication()
         self.comm.run_server(callback=self.receive_handle, local_address=local)
         self.comm.start()
         self.loads = {}
-        super(NetworkAllocator, self).__init__()
+        self.timeouts = {}
+        self.alloc_ack_timeout = 10
+        super(NetworkAllocator, self).__init__(env=env)
 
     def initialise(self):
         pass
@@ -95,11 +91,14 @@ class NetworkAllocator(Agent):
             agent_id = data['agent_id']
             allocation = data['allocation']
             self.add_load(load_id=agent_id, allocation=allocation)
-            self.schedule(action=self.send_join_ack, args={'dst': src}, time=0)
+            self.schedule(action=self.send_join_ack, args={'dst': src})
         elif msg_type == 'allocation_ack':
             agent_id = data['agent_id']
             allocation = data['allocation']
             self.add_load(load_id=agent_id, allocation=allocation)
+            # Interrupting timeout event for this allocation
+            id = allocation['allocation_id']
+            self.timeouts.pop(id, None).interrupt()
         elif msg_type == 'leave':
             agent_id = data['agent_id']
             self.remove_load(load_id=agent_id)
@@ -136,7 +135,26 @@ class NetworkAllocator(Agent):
         """
         print("sending allocation to {}".format(agent_id))
         packet = {'msg_type': 'allocation', 'allocation': allocation}
-        self.comm.send(request=packet, remote=agent_id)
+
+        # Creating Event that is triggered if no ack is received before a timeout
+        noack_event = self.env.event()
+        noack_event.callbacks.append(
+            lambda event: print(
+                "no ack from {} for allocation {}. Now is {}".format(
+                    event.value[0],
+                    event.value[1],
+                    self.env.now)))
+        p = self.schedule(
+            action=
+            lambda event: event.succeed(value=[agent_id, allocation['allocation_id']]),
+            args={'event': noack_event},
+            time=self.alloc_ack_timeout)
+        self.timeouts[allocation['allocation_id']] = p
+        self.schedule(
+            self.comm.send, args={
+                'request': packet,
+                'remote': agent_id
+            })
 
     def send_join_ack(self, dst):
         """ Acknowledge a network load has joing the network (added to known loads list)
@@ -169,7 +187,7 @@ class NetworkAllocator(Agent):
 
 
 class NetworkLoad(Agent):
-    def __init__(self, remote='127.0.0.1:5555', local='*:5000'):
+    def __init__(self, remote='127.0.0.1:5555', local='*:5000', env=None):
         self.remote = remote
         self.local = local
         self.agent_id = self.local
@@ -177,7 +195,7 @@ class NetworkLoad(Agent):
         self.comm = AsyncCommunication(identity=self.agent_id)
         self.comm.run_server(callback=self.receive_handle, local_address=local)
         self.comm.start()
-        super(NetworkLoad, self).__init__()
+        super(NetworkLoad, self).__init__(env=env)
 
     def receive_handle(self, data, src):
         """ Handled payload received from AsyncCommunication
