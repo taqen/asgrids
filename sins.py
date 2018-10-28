@@ -15,17 +15,20 @@ class Agent:
 
         :param env: a simpy simulation environment
         """
-        self.env = simpy.rt.Environment() if env is None else env
+        self.env = simpy.rt.RealtimeEnvironment() if env is None else env
         self.running = self.env.process(self._run())
 
     def run(self):
         self.env.run(until=self.running)
 
     def _run(self):
-        try:
-            yield self.env.timeout(simpy.core.Infinity)
-        except simpy.Interrupt:
-            return
+        if isinstance(self.env, simpy.RealtimeEnvironment):
+            self.env.sync()
+        while True:
+            try:
+                yield self.env.timeout(1000)
+            except simpy.Interrupt:
+                return
 
     def schedule(self, action, args=None, time=0):
         """ The agent's schedule function
