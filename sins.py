@@ -1,5 +1,12 @@
+'''
+TODO Handle allocation no_acknowledgemnt
+TODO Handle proper network stop (stop packet + ack)
+'''
+
 import simpy
+
 from async_communication import AsyncCommunication
+
 
 # A generic Network Agent.
 class Agent:
@@ -8,42 +15,54 @@ class Agent:
 
         :param env: a simpy simulation environment
         """
-        if env is None:
-            self.env = simpy.Environment()
-        else:
-            self.env = env
-        self.running = True
-        self.env.process(self.run())
-        self.env.run()
+        self.env = simpy.rt.Environment() if env is None else env
+        self.running = self.env.process(self._run())
 
     def run(self):
-        """ Starting the local simulation event loop
-        To avoid executing run every time an event is scheduled,
-        an empty event is infinitely scheduled
-        """
-        while self.running:
-            yield self.env.timeout(1)
+        self.env.run(until=self.running)
 
-    def schedule(self, time, action):
+    def _run(self):
+        try:
+            yield self.env.timeout(simpy.core.Infinity)
+        except simpy.Interrupt:
+            return
+
+    def schedule(self, action, args=None, time=0):
         """ The agent's schedule function
 
         :param time: relative time from present to execute action
         :param action: the handle to the function to be executed at time.
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
-        p = self.env.process(action, delay=time)
+        print("scheduling action {}".format(action))
+        p = self.env.process(self.process(action=action, args=args, time=time))
+        #if self.running is not None:
+        #    self.running.interrupt()
+        #    p.callbacks = {lambda e: self.env.process(self._run())}
         return p
+
+    def process(self, action, args, time=0):
+        print("now = %d" % self.env.now)
+        yield self.env.timeout(time)
+        print("now = %d" % self.env.now)
+        print("executing action {}".format(action))
+        if args is None:
+            action()
+        else:
+            action(**args)
+        print("exceuted")
 
     def stop(self):
         """ stop the Agent by stop the local simpy environment.
 
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
-        self.running = False
+        self.running.interrupt()
+
 
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
@@ -64,8 +83,8 @@ class NetworkAllocator(Agent):
 
         :param data: received payload
         :param src: source of payload
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
         msg_type = data['msg_type']
@@ -73,7 +92,7 @@ class NetworkAllocator(Agent):
             agent_id = data['agent_id']
             allocation = data['allocation']
             self.add_load(load_id=agent_id, allocation=allocation)
-            self.schedule(time=0, action=self.send_join_ack(dst=src))
+            self.schedule(action=self.send_join_ack, args={'dst': src}, time=0)
         elif msg_type == 'allocation_ack':
             agent_id = data['agent_id']
             allocation = data['allocation']
@@ -87,8 +106,8 @@ class NetworkAllocator(Agent):
 
         :param load_id: id of load to be added (used as a dictionary key)
         :param allocation: the load's reported allocation when added.
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
         self.loads[load_id] = allocation
@@ -98,7 +117,7 @@ class NetworkAllocator(Agent):
 
         :param load_id: id (key) of load to be removed.
         :returns: The removed load.
-        :rtype: 
+        :rtype:
 
         """
         return self.loads.pop(load_id, None)
@@ -108,33 +127,43 @@ class NetworkAllocator(Agent):
 
         :param agent_id: id of destination load
         :param allocation: allocation to be sent
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
+        print("sending allocation to {}".format(agent_id))
         packet = {'msg_type': 'allocation', 'allocation': allocation}
-        self.schedule(action=self.comm.send(agent_id, packet))
+        self.comm.send(request=packet, remote=agent_id)
 
     def send_join_ack(self, dst):
         """ Acknowledge a network load has joing the network (added to known loads list)
 
         :param dst: destination of acknowledgemnt, should be the same load who requested joining.
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
         packet = {'msg_type': 'join_ack'}
-        self.schedule(action=self.comm.send(packet, remote=dst))
+        print("sending join ack")
+        self.comm.send(packet, remote=dst)
 
     def stop(self):
         """ Stops the allocator, by first stop the AsyncComm interface then the parent Agent.
 
-        :returns: 
-        :rtype: 
+        :returns:
+        :rtype:
 
         """
-        self.env.process(self.comm.stop())
-        self.env.process(super(NetworkAllocator, self).stop())
+        packet = {'msg_type': 'stop'}
+        for load in self.loads:
+            self.schedule(
+                self.comm.send, args={
+                    'request': packet,
+                    'remote': load
+                })
+        self.schedule(self.comm.stop)
+        self.schedule(super(NetworkAllocator, self).stop)
+
 
 class NetworkLoad(Agent):
     def __init__(self, remote='127.0.0.1:5555', local='*:5000'):
@@ -142,45 +171,101 @@ class NetworkLoad(Agent):
         self.local = local
         self.agent_id = self.local
         self.curr_allocation = 0
-        self.comm = AsyncCommunication(identity=self.id)
+        self.comm = AsyncCommunication(identity=self.agent_id)
         self.comm.run_server(callback=self.receive_handle, local_address=local)
         self.comm.start()
         super(NetworkLoad, self).__init__()
 
     def receive_handle(self, data, src):
+        """ Handled payload received from AsyncCommunication
+
+        :param data: payload received
+        :param src: source of payload
+        :returns:
+        :rtype:
+
+        """
+        print("NetworkLoad handling {} from {}".format(data, src))
         msg_type = data['msg_type']
-        if msg_type == 'ack':
+        if msg_type == 'join_ack':
             return
         if msg_type == 'allocation':
             allocation = data['allocation']
-            self.schedule(time=0, action=self.send_ack(allocation, dst=src))
-            self.schedule(time=0, action=self.allocation_handle(allocation))
+            print("allocation={}".format(allocation))
+            self.schedule(
+                action=self.send_ack,
+                args={
+                    'allocation': allocation,
+                    'dst': src
+                },
+                time=0)
+            print("handling allocation")
+            self.schedule(
+                action=self.allocation_handle,
+                args={'allocation': allocation},
+                time=1)
+        if msg_type == 'stop':
+            self.stop()
 
     def allocation_handle(self, allocation):
+        """ Handle a received allocation
+
+        :param allocation: the allocation duration and value to be processed.
+        :returns:
+        :rtype:
+
+        """
         duration = allocation['duration']
         value = allocation['allocation_value']
         print("Current load is {}".format(value))
         yield self.env.timeout(duration)
 
     def join_ack_handle(self):
-        pass
+        """ handle received join ack
+
+        :returns:
+        :rtype:
+
+        """
+        yield self.env.timeout(0)
 
     def send_join(self, dst):
+        """ Send a join request to the allocator
+
+        :param dst: destination address of the allocator
+        :returns:
+        :rtype:
+
+        """
         packet = {
             'agent_id': self.agent_id,
             'msg_type': 'join',
             'allocation': self.curr_allocation
         }
-        self.schedule(time=0, action=self.comm.send(packet, remote=dst))
+        self.comm.send(packet, remote=dst)
 
     def send_ack(self, allocation, dst):
+        """ Acknowledge a requested allocation to the Allocator.
+
+        :param allocation: allocation that is processed
+        :param dst: destination address of the Allocator
+        :returns:
+        :rtype:
+
+        """
         packet = {
             'agent_id': self.agent_id,
             "msg_type": "allocation_ack",
             "allocation": allocation.copy()
         }
-        self.schedule(time=0, action=self.comm.send(packet, remote=dst))
+        self.comm.send(packet, remote=dst)
 
     def stop(self):
-        self.env.process(self.comm.stop())
-        self.env.process(super(NetworkLoad, self).stop())
+        """ Stop the NetworkLoad the the parent Agent.
+
+        :returns:
+        :rtype:
+
+        """
+        self.schedule(self.comm.stop)
+        self.schedule(super(NetworkLoad, self).stop)
