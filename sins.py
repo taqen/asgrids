@@ -3,23 +3,28 @@ TODO Handle allocation no_acknowledgemnt
 TODO Handle proper network stop (stop packet + ack)
 '''
 
+import hashlib
 import simpy
 
 from async_communication import AsyncCommunication
 
 
 # A generic Network Agent.
-class Agent:
+class Agent():
     def __init__(self, env=None):
         """ Make sure a simulation environment is present and Agent is running.
 
         :param env: a simpy simulation environment
         """
         self.env = simpy.rt.RealtimeEnvironment() if env is None else env
+        self.timeouts = {}
         self.running = self.env.process(self._run())
 
     def run(self):
-        self.env.run(until=self.running)
+        try:
+            self.env.run(until=self.running)
+        except KeyboardInterrupt:
+            self.stop()
 
     def _run(self):
         if isinstance(self.env, simpy.RealtimeEnvironment):
@@ -51,14 +56,31 @@ class Agent:
         else:
             action(**args)
 
+    @staticmethod
     def stop(self):
-        """ stop the Agent by stop the local simpy environment.
+        """ stop the Agent.
+        Behavior left for child classes
 
         :returns:
         :rtype:
 
         """
-        self.running.interrupt()
+        raise NotImplementedError("Must override stop")
+
+    def create_timeout(self, timeout, value=None, msg=''):
+        event = self.env.event()
+        event.callbacks.append(
+            lambda event: print("timeout expired\n {}".format(msg)))
+        event_process = self.schedule(
+            action=lambda event: event.succeed(value),
+            args={'event': event},
+            time=timeout)
+        return event_process
+
+    def cancel_timeout(self, event_id):
+        e = self.timeouts.pop(event_id, None)
+        if e is not None:
+            e.interrupt()
 
 
 class NetworkAllocator(Agent):
@@ -66,12 +88,12 @@ class NetworkAllocator(Agent):
 
     def __init__(self, local='*:5555', env=None):
         self.local = local
-        self.comm = AsyncCommunication()
-        self.comm.run_server(callback=self.receive_handle, local_address=local)
+        self.comm = AsyncCommunication(callback=self.receive_handle, local_address=local)
+        #self.comm.run_server(callback=self.receive_handle, local_address=local)
         self.comm.start()
         self.loads = {}
-        self.timeouts = {}
-        self.alloc_ack_timeout = 10
+        self.alloc_ack_timeout = 5
+        self.stop_ack_tiemout = 5
         super(NetworkAllocator, self).__init__(env=env)
 
     def initialise(self):
@@ -97,11 +119,17 @@ class NetworkAllocator(Agent):
             allocation = data['allocation']
             self.add_load(load_id=agent_id, allocation=allocation)
             # Interrupting timeout event for this allocation
-            id = allocation['allocation_id']
-            self.timeouts.pop(id, None).interrupt()
+            event_id = hashlib.md5('allocation {} {}'.format(
+                allocation['allocation_id'], src)).hexdigest()
+            self.cancel_timeout(event_id)
         elif msg_type == 'leave':
             agent_id = data['agent_id']
             self.remove_load(load_id=agent_id)
+        if msg_type == 'stop':
+            self.schedule(action=self.stop_network)
+        if msg_type == 'stop_ack':
+            event_id = hashlib.md5('stop {}'.format(src)).hexdigest()
+            self.cancel_timeout(event_id)
 
     def add_load(self, load_id, allocation):
         """ Add a network load to Allocator's known loads list.
@@ -137,19 +165,13 @@ class NetworkAllocator(Agent):
         packet = {'msg_type': 'allocation', 'allocation': allocation}
 
         # Creating Event that is triggered if no ack is received before a timeout
-        noack_event = self.env.event()
-        noack_event.callbacks.append(
-            lambda event: print(
-                "no ack from {} for allocation {}. Now is {}".format(
-                    event.value[0],
-                    event.value[1],
-                    self.env.now)))
-        p = self.schedule(
-            action=
-            lambda event: event.succeed(value=[agent_id, allocation['allocation_id']]),
-            args={'event': noack_event},
-            time=self.alloc_ack_timeout)
-        self.timeouts[allocation['allocation_id']] = p
+        event_value = [agent_id, allocation['allocation_id']]
+        noack_event = self.create_timeout(
+            value=event_value,
+            timeout=self.alloc_ack_timeout,
+            msg='no ack from {} for allocation {}'.format(
+                event_value[0], event_value[1]))
+        self.timeouts[allocation['allocation_id']] = noack_event
         self.schedule(
             self.comm.send, args={
                 'request': packet,
@@ -168,22 +190,42 @@ class NetworkAllocator(Agent):
         print("sending join ack")
         self.comm.send(packet, remote=dst)
 
-    def stop(self):
-        """ Stops the allocator, by first stop the AsyncComm interface then the parent Agent.
-
+    def stop_network(self):
+        """ Stops the allocator.
+        First, it stops all loads in self.loads.
+        Second, wait self.stop_ack_timeout then stop parent Agent
+        Third, stop self.comm
         :returns:
         :rtype:
 
         """
         packet = {'msg_type': 'stop'}
+
+        # Stopping register loads
         for load in self.loads:
             self.schedule(
                 self.comm.send, args={
                     'request': packet,
                     'remote': load
                 })
-        self.schedule(self.comm.stop)
-        self.schedule(super(NetworkAllocator, self).stop)
+            noack_event = self.create_timeout(
+                timeout=self.stop_ack_tiemout, msg="NetworkLoad stop, no ack")
+            event_id = hashlib.md5('stop {}'.format(load)).hexdigest()
+            self.timeouts[event_id] = noack_event
+
+        p = self.schedule(self.stop, time=self.stop_ack_tiemout)
+        p.callbacks.append(
+            lambda event: map(lambda timeout: timeout.interrupt(), self.timeouts)
+        )
+        p.callbacks.append(lambda event: self.running.interrupt())
+
+    def stop(self):
+        self.running.interrupt()
+        self.comm.stop()
+        self.comm.join()
+        print("Comm thread is alive? {}".format(self.comm.is_alive()))
+        import sys
+        sys.exit()
 
 
 class NetworkLoad(Agent):
