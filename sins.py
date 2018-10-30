@@ -3,11 +3,13 @@ TODO Handle allocation no_acknowledgemnt
 TODO Handle proper network stop (stop packet + ack)
 '''
 
+from abc import abstractmethod
 import hashlib
 import simpy
+import sys
+import signal
 
 from async_communication import AsyncCommunication
-
 
 # A generic Network Agent.
 class Agent():
@@ -24,6 +26,7 @@ class Agent():
         try:
             self.env.run(until=self.running)
         except KeyboardInterrupt:
+            self.running.interrupt()
             self.stop()
 
     def _run(self):
@@ -33,7 +36,8 @@ class Agent():
             try:
                 yield self.env.timeout(1000)
             except simpy.Interrupt:
-                return
+                print("Agent._run interrupted")
+                break
 
     def schedule(self, action, args=None, time=0):
         """ The agent's schedule function
@@ -52,11 +56,11 @@ class Agent():
         yield self.env.timeout(time)
         print("executing action {} after {} seconds".format(action, time))
         if args is None:
+            print("Action has no args")
             action()
         else:
             action(**args)
 
-    @staticmethod
     def stop(self):
         """ stop the Agent.
         Behavior left for child classes
@@ -65,21 +69,27 @@ class Agent():
         :rtype:
 
         """
-        raise NotImplementedError("Must override stop")
 
-    def create_timeout(self, timeout, value=None, msg=''):
+        print("interrupting pending timeouts")
+        for timeout in self.timeouts:
+            if not self.timeouts[timeout].processed:
+                self.timeouts[timeout].interrupt()
+
+    def create_timeout(self, timeout, event_id, msg=''):
         event = self.env.event()
         event.callbacks.append(
             lambda event: print("timeout expired\n {}".format(msg)))
+        event.callbacks.append(
+            lambda event: self.cancel_timeout(event_id))
         event_process = self.schedule(
-            action=lambda event: event.succeed(value),
+            action=lambda event: event.succeed(event_id),
             args={'event': event},
             time=timeout)
         return event_process
 
     def cancel_timeout(self, event_id):
         e = self.timeouts.pop(event_id, None)
-        if e is not None:
+        if e is not None and not e.processed:
             e.interrupt()
 
 
@@ -89,7 +99,6 @@ class NetworkAllocator(Agent):
     def __init__(self, local='*:5555', env=None):
         self.local = local
         self.comm = AsyncCommunication(callback=self.receive_handle, local_address=local)
-        #self.comm.run_server(callback=self.receive_handle, local_address=local)
         self.comm.start()
         self.loads = {}
         self.alloc_ack_timeout = 5
@@ -165,12 +174,12 @@ class NetworkAllocator(Agent):
         packet = {'msg_type': 'allocation', 'allocation': allocation}
 
         # Creating Event that is triggered if no ack is received before a timeout
-        event_value = [agent_id, allocation['allocation_id']]
+        event_id = hashlib.md5('allocation {} {}'.format(allocation['allocation_id'], agent_id).encode()).hexdigest()
         noack_event = self.create_timeout(
-            value=event_value,
+            event_id=event_id,
             timeout=self.alloc_ack_timeout,
             msg='no ack from {} for allocation {}'.format(
-                event_value[0], event_value[1]))
+                agent_id, allocation['allocation_id']))
         self.timeouts[allocation['allocation_id']] = noack_event
         self.schedule(
             self.comm.send, args={
@@ -208,25 +217,26 @@ class NetworkAllocator(Agent):
                     'request': packet,
                     'remote': load
                 })
-            noack_event = self.create_timeout(
-                timeout=self.stop_ack_tiemout, msg="NetworkLoad stop, no ack")
             event_id = hashlib.md5('stop {}'.format(load)).hexdigest()
+            noack_event = self.create_timeout(
+                timeout=self.stop_ack_tiemout,
+                msg="NetworkLoad stop, no ack",
+                event_id=event_id)
             self.timeouts[event_id] = noack_event
 
-        p = self.schedule(self.stop, time=self.stop_ack_tiemout)
-        p.callbacks.append(
+        proc = self.schedule(self.stop, time=self.stop_ack_tiemout)
+        proc.callbacks.append(
             lambda event: map(lambda timeout: timeout.interrupt(), self.timeouts)
         )
-        p.callbacks.append(lambda event: self.running.interrupt())
+        proc.callbacks.append(lambda event: self.running.interrupt())
 
     def stop(self):
-        self.running.interrupt()
+        # Stop underlying simpy event loop
+        super(NetworkAllocator, self).stop()
+        # Inform AsyncCommThread we are stopping
         self.comm.stop()
+        # Wait for asyncio thread to cleanup properly
         self.comm.join()
-        print("Comm thread is alive? {}".format(self.comm.is_alive()))
-        import sys
-        sys.exit()
-
 
 class NetworkLoad(Agent):
     def __init__(self, remote='127.0.0.1:5555', local='*:5000', env=None):
@@ -234,8 +244,9 @@ class NetworkLoad(Agent):
         self.local = local
         self.agent_id = self.local
         self.curr_allocation = 0
-        self.comm = AsyncCommunication(identity=self.agent_id)
-        self.comm.run_server(callback=self.receive_handle, local_address=local)
+        self.comm = AsyncCommunication(callback=self.receive_handle,
+                                       local_address=local,
+                                       identity=self.agent_id)
         self.comm.start()
         super(NetworkLoad, self).__init__(env=env)
 
@@ -330,5 +341,5 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.schedule(self.comm.stop)
-        self.schedule(super(NetworkLoad, self).stop)
+        self.comm.stop()
+        self.comm.join()

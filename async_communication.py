@@ -8,7 +8,6 @@ import zmq
 import zmq.asyncio
 
 import _pickle as pickle
-
 # Get the local logger
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,6 @@ class AsyncCommunication(threading.Thread):
         self._target_address = None  # type:str
         self._receive_callback = None
         self._log = logging.getLogger(__name__)
-
         self.identity = identity
         self.callback = callback
         self.local_address = local_address
@@ -28,45 +26,48 @@ class AsyncCommunication(threading.Thread):
         self.server = None
         self.poller = None
         self.timeout = 1000
-        self.retries = 10
         self.running = False
         self.context = zmq.asyncio.Context()
         self.poller = zmq.asyncio.Poller()
         self.loop = asyncio.new_event_loop()
-        # self.loop.set_debug(True)
-
+        self.loop.set_debug(True)
         name = 'AsyncCommThread'
         if identity:
             name = name + identity
 
-        super(AsyncCommunication, self).__init__(name=name)
+        threading.Thread.__init__(self, name=name, daemon=True)
+        #super(AsyncCommunication, self).__init__(name=name)
 
     def run(self):
         asyncio.set_event_loop(self.loop)
-        self.running=True
-        server_future = asyncio.ensure_future(self._run_server(callback=self.callback, local_address=self.local_address), loop=self.loop)
+        self.running = True
+        server_future = asyncio.ensure_future(self._run_server(callback=self.callback,
+                                                               local_address=self.local_address),
+                                              loop=self.loop)
         try:
             self.loop.run_until_complete(server_future)
-        except asyncio.CancelledError as e:
-            server_future.cancel()
+        finally:
+            self.loop.close()
 
 
     async def _send(self, request, remote=None):
         if self.client is None:
             print("creating client")
             self.client = self.context.socket(zmq.DEALER)
+            # No lingering after socket is closed.
+            # This has proven to cause problems terminating asyncio if not 0
+            self.client.setsockopt(zmq.LINGER, 0)
 
         if self.identity is not None:
             print("identity is %s" % self.identity)
             identity = pickle.dumps(self.identity)
             try:
                 self.client.setsockopt(zmq.IDENTITY, identity)
-            except Exception:
-                print("Error while setting socket identity")
+            except zmq.ZMQError as zmqerror:
+                print("Error while setting socket identity. {}".format(zmqerror))
 
         if not remote:
             msg = 'no socket_address provided'
-            print(msg)
             raise ValueError(msg)
 
         socket_address = 'tcp://{}'.format(remote)
@@ -75,18 +76,18 @@ class AsyncCommunication(threading.Thread):
         try:
             self.client.connect(socket_address)
             self.poller.register(self.client, zmq.POLLIN)
-        except Exception:
-            print("Error connecting client socket")
+        except zmq.ZMQError as zmqerror:
+            print("Error connecting client socket. {}".format(zmqerror))
 
         print('sending {} to {}'.format(request, socket_address))
         await self.client.send_multipart([pickle.dumps(request)])
-
         self.poller.unregister(self.client)
         self.client.close()
+        self.client = None
 
 
     async def _run_server(self, local_address, callback=None):
-        if not (local_address):
+        if not local_address:
             msg = 'At least TCP address must be used.'
             raise ValueError(msg)
         if self.identity is None:
@@ -98,12 +99,7 @@ class AsyncCommunication(threading.Thread):
         self.poller.register(self.server, zmq.POLLIN)
         print('running server')
         while self.running:
-            try:
-                items = await self.poller.poll(self.timeout)
-            except (asyncio.CancelledError) as e:
-                break
-            items = dict(items)
-
+            items = dict(await self.poller.poll(self.timeout))
             if self.server in items and items[self.server] == zmq.POLLIN:
                 print("receiving at server")
                 ident, msg = await self.server.recv_multipart()
@@ -121,10 +117,9 @@ class AsyncCommunication(threading.Thread):
                 ident = pickle.loads(ident)
                 callback(data=msg, src=ident)
 
-        print("Done running server")
+        print("stopping server")
         self.poller.unregister(self.server)
         self.server.close()
-        self.stop()
 
     def send(self, request, remote=None):
         print("send {} to {}".format(request, remote))
@@ -133,12 +128,4 @@ class AsyncCommunication(threading.Thread):
 
     def stop(self):
         print("Stopping AsyncCommThread")
-        if self.running:
-            self.running = False
-        else:
-            for task in asyncio.Task.all_tasks(self.loop):
-                task.cancel()
-            self.loop.stop()
-            self.loop.close()
-            print("Stopped AsyncCommThread")
-            #self.context.destroy()
+        self.running = False
