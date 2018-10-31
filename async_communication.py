@@ -6,8 +6,9 @@ import threading
 
 import zmq
 import zmq.asyncio
+from concurrent.futures import ThreadPoolExecutor
+import msgpack
 
-import _pickle as pickle
 # Get the local logger
 logger = logging.getLogger(__name__)
 
@@ -30,25 +31,28 @@ class AsyncCommunication(threading.Thread):
         self.context = zmq.asyncio.Context()
         self.poller = zmq.asyncio.Poller()
         self.loop = asyncio.new_event_loop()
-        self.loop.set_debug(True)
+        self.loop.set_debug(False)
+        self.executor = ThreadPoolExecutor(max_workers=10,
+                                           thread_name_prefix='executor')
+        self.loop.set_default_executor(self.executor)
         name = 'AsyncCommThread'
         if identity:
             name = name + identity
 
-        threading.Thread.__init__(self, name=name, daemon=True)
+        threading.Thread.__init__(self, name=name)
         #super(AsyncCommunication, self).__init__(name=name)
 
     def run(self):
         asyncio.set_event_loop(self.loop)
         self.running = True
-        server_future = asyncio.ensure_future(self._run_server(callback=self.callback,
-                                                               local_address=self.local_address),
-                                              loop=self.loop)
+        server_future = asyncio.ensure_future(
+            self._run_server(callback=self.callback,
+                             local_address=self.local_address),
+            loop=self.loop)
         try:
             self.loop.run_until_complete(server_future)
         finally:
             self.loop.close()
-
 
     async def _send(self, request, remote=None):
         if self.client is None:
@@ -60,11 +64,11 @@ class AsyncCommunication(threading.Thread):
 
         if self.identity is not None:
             print("identity is %s" % self.identity)
-            identity = pickle.dumps(self.identity)
+            identity = msgpack.packb(self.identity, encoding='utf-8')
             try:
                 self.client.setsockopt(zmq.IDENTITY, identity)
             except zmq.ZMQError as zmqerror:
-                print("Error while setting socket identity. {}".format(zmqerror))
+                print("Error setting socket identity. {}".format(zmqerror))
 
         if not remote:
             msg = 'no socket_address provided'
@@ -80,11 +84,10 @@ class AsyncCommunication(threading.Thread):
             print("Error connecting client socket. {}".format(zmqerror))
 
         print('sending {} to {}'.format(request, socket_address))
-        await self.client.send_multipart([pickle.dumps(request)])
+        await self.client.send_multipart([msgpack.packb(request, encoding='utf-8')])
         self.poller.unregister(self.client)
         self.client.close()
         self.client = None
-
 
     async def _run_server(self, local_address, callback=None):
         if not local_address:
@@ -103,19 +106,25 @@ class AsyncCommunication(threading.Thread):
             if self.server in items and items[self.server] == zmq.POLLIN:
                 print("receiving at server")
                 ident, msg = await self.server.recv_multipart()
-                msg = pickle.loads(msg)
-                ident = pickle.loads(ident).decode()
+                msg = msgpack.unpackb(msg, encoding='utf-8')
+                ident = msgpack.unpackb(ident, encoding='utf-8')
                 print('server received {} from {}'.format(msg, ident))
-                callback(data=msg, src=ident)
+                await self.loop.run_in_executor(self.executor,
+                                                callback,
+                                                msg,
+                                                ident)
                 #TODO respond after server receive
                 # await self.server.send_multipart(msg)
             if self.client in items and items[self.client] == zmq.POLLIN:
                 ident, msg = await self.client.recv_multipart()
                 print('received ack at client socket')
                 #TODO Should this be further handled?
-                msg = pickle.loads(msg)
-                ident = pickle.loads(ident)
-                callback(data=msg, src=ident)
+                msg = msgpack.unpackb(msg, encoding='utf-8')
+                ident = msgpack(ident, encoding='utf-8')
+                await self.loop.run_in_executor(self.executor,
+                                                callback,
+                                                msg,
+                                                ident)
 
         print("stopping server")
         self.poller.unregister(self.server)
