@@ -54,7 +54,12 @@ class Agent():
             self.process(action=action, args=args, time=time))
 
     def process(self, action, args, time=0):
-        yield self.env.timeout(time)
+        try:
+            yield self.env.timeout(time)
+        except simpy.Interrupt:
+            print("Interrupted action {}".format(action))
+            return
+
         print("executing action {} after {} seconds".format(action, time))
         if args is None:
             print("Action has no args")
@@ -91,9 +96,7 @@ class Agent():
     def cancel_timeout(self, event_id):
         e = self.timeouts.pop(event_id, None)
         if e is None:
-            print("All events")
-            print(self.timeouts)
-            raise ValueError("event_id not in list")
+            raise ValueError("unknown event_id {}".format(event_id))
         if e is not None and not (e.processed or e.triggered):
             e.interrupt()
 
@@ -135,7 +138,7 @@ class NetworkAllocator(Agent):
             # Interrupting timeout event for this allocation
             event_id = hashlib.md5('allocation {} {}'.format(
                 allocation['allocation_id'], src).encode()).hexdigest()
-            print(event_id)
+            print("Cancelling event {}".format(event_id))
             self.cancel_timeout(event_id)
         elif msg_type == 'leave':
             agent_id = data['agent_id']
@@ -181,7 +184,6 @@ class NetworkAllocator(Agent):
 
         # Creating Event that is triggered if no ack is received before a timeout
         event_id = hashlib.md5('allocation {} {}'.format(allocation['allocation_id'], agent_id).encode()).hexdigest()
-        print(event_id)
         noack_event = self.create_timeout(
             event_id=event_id,
             timeout=self.alloc_ack_timeout,
@@ -269,7 +271,7 @@ class NetworkLoad(Agent):
         print("NetworkLoad handling {} from {}".format(data, src))
         msg_type = data['msg_type']
         if msg_type == 'join_ack':
-            return
+            print("Joined allocator successfully")
         if msg_type == 'allocation':
             allocation = data['allocation']
             print("allocation={}".format(allocation))
@@ -278,13 +280,11 @@ class NetworkLoad(Agent):
                 args={
                     'allocation': allocation,
                     'dst': src
-                },
-                time=0)
+                })
             print("handling allocation")
             self.schedule(
                 action=self.allocation_handle,
-                args={'allocation': allocation},
-                time=1)
+                args={'allocation': allocation})
         if msg_type == 'stop':
             self.stop()
 
