@@ -90,7 +90,11 @@ class Agent():
 
     def cancel_timeout(self, event_id):
         e = self.timeouts.pop(event_id, None)
-        if e is not None and not e.processed:
+        if e is None:
+            print("All events")
+            print(self.timeouts)
+            raise ValueError("event_id not in list")
+        if e is not None and not (e.processed or e.triggered):
             e.interrupt()
 
 
@@ -130,7 +134,8 @@ class NetworkAllocator(Agent):
             self.add_load(load_id=agent_id, allocation=allocation)
             # Interrupting timeout event for this allocation
             event_id = hashlib.md5('allocation {} {}'.format(
-                allocation['allocation_id'], src)).hexdigest()
+                allocation['allocation_id'], src).encode()).hexdigest()
+            print(event_id)
             self.cancel_timeout(event_id)
         elif msg_type == 'leave':
             agent_id = data['agent_id']
