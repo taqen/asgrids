@@ -60,7 +60,7 @@ class AsyncCommunication(threading.Thread):
             self.client = self.context.socket(zmq.DEALER)
             # No lingering after socket is closed.
             # This has proven to cause problems terminating asyncio if not 0
-            self.client.setsockopt(zmq.LINGER, 0)
+            self.client.setsockopt(zmq.LINGER, 100)
 
         if self.identity is not None:
             print("identity is %s" % self.identity)
@@ -120,7 +120,7 @@ class AsyncCommunication(threading.Thread):
                 print('received ack at client socket')
                 #TODO Should this be further handled?
                 msg = msgpack.unpackb(msg, encoding='utf-8')
-                ident = msgpack(ident, encoding='utf-8')
+                ident = msgpack.unpackb(ident, encoding='utf-8')
                 await self.loop.run_in_executor(self.executor,
                                                 callback,
                                                 msg,
