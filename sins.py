@@ -26,7 +26,8 @@ class Agent():
         try:
             self.env.run(until=self.running)
         except KeyboardInterrupt:
-            self.running.interrupt()
+            #if not self.running.processed:
+            #    self.running.interrupt()
             self.stop()
 
     def _run(self):
