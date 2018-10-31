@@ -181,12 +181,13 @@ class NetworkAllocator(Agent):
 
         # Creating Event that is triggered if no ack is received before a timeout
         event_id = hashlib.md5('allocation {} {}'.format(allocation['allocation_id'], agent_id).encode()).hexdigest()
+        print(event_id)
         noack_event = self.create_timeout(
             event_id=event_id,
             timeout=self.alloc_ack_timeout,
             msg='no ack from {} for allocation {}'.format(
                 agent_id, allocation['allocation_id']))
-        self.timeouts[allocation['allocation_id']] = noack_event
+        self.timeouts[event_id] = noack_event
         self.schedule(
             self.comm.send, args={
                 'request': packet,
