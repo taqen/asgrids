@@ -35,7 +35,7 @@ class Agent():
             self.env.sync()
         while True:
             try:
-                yield self.env.timeout(1000)
+                yield self.env.timeout(1e-2)
             except simpy.Interrupt:
                 print("Agent._run interrupted")
                 break
