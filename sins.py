@@ -278,25 +278,29 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        print("NetworkLoad handling {} from {}".format(data, src))
+        logger.info("NetworkLoad handling {} from {}".format(data, src))
         msg_type = data['msg_type']
         if msg_type == 'join_ack':
-            print("Joined allocator successfully")
+            logger.info("Joined successfully allocator at %s"%src)
         if msg_type == 'allocation':
             allocation = data['allocation']
-            print("allocation={}".format(allocation))
+            logger.debug("allocation={}".format(allocation))
             self.schedule(
                 action=self.send_ack,
                 args={
                     'allocation': allocation,
                     'dst': src
                 })
-            print("handling allocation")
             self.schedule(
                 action=self.allocation_handle,
                 args={'allocation': allocation})
         if msg_type == 'stop':
-            self.stop()
+            self.schedule(action=lambda: self.comm.send(
+                {'msg_type':'stop_ack'}, remote=src
+            ))
+            # Too much events at same time breaks realtime
+            proc = self.schedule(action=self.stop, time=1)
+            proc.callbacks.append(lambda e: self.running.interrupt())
 
     def allocation_handle(self, allocation):
         """ Handle a received allocation
@@ -333,7 +337,7 @@ class NetworkLoad(Agent):
             'msg_type': 'join',
             'allocation': self.curr_allocation
         }
-        self.comm.send(packet, remote=dst)
+        self.schedule(self.comm.send, args={"request":packet, "remote":dst})
 
     def send_ack(self, allocation, dst):
         """ Acknowledge a requested allocation to the Allocator.
@@ -349,14 +353,19 @@ class NetworkLoad(Agent):
             "msg_type": "allocation_ack",
             "allocation": allocation.copy()
         }
-        self.comm.send(packet, remote=dst)
+        self.schedule(self.comm.send, args={"request":packet, "remote":dst})
 
+    def send_leave(self, dst):
+        logger.info("NetworkLoad {} Leaving {}".format(self.agent_id, dst))
+        packet = {
+            'agent_id': self.agent_id,
+            'msg_type': 'leave'
+        }
+        self.schedule(self.comm.send, args={"request":packet, "remote":dst})
     def stop(self):
-        """ Stop the NetworkLoad the the parent Agent.
-
-        :returns:
-        :rtype:
-
-        """
+        # Stop underlying simpy event loop
+        super(NetworkLoad, self).stop()
+        # Inform AsyncCommThread we are stopping
         self.comm.stop()
+        # Wait for asyncio thread to cleanup properly
         self.comm.join()
