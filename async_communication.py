@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import msgpack
 
 # Get the local logger
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('AsyncCommThread')
 
 
 class AsyncCommunication(threading.Thread):
@@ -56,19 +56,19 @@ class AsyncCommunication(threading.Thread):
 
     async def _send(self, request, remote=None):
         if self.client is None:
-            print("creating client")
+            logger.debug("creating client")
             self.client = self.context.socket(zmq.DEALER)
             # No lingering after socket is closed.
             # This has proven to cause problems terminating asyncio if not 0
             self.client.setsockopt(zmq.LINGER, 100)
 
         if self.identity is not None:
-            print("identity is %s" % self.identity)
+            logger.info("identity is %s" % self.identity)
             identity = msgpack.packb(self.identity, encoding='utf-8')
             try:
                 self.client.setsockopt(zmq.IDENTITY, identity)
             except zmq.ZMQError as zmqerror:
-                print("Error setting socket identity. {}".format(zmqerror))
+                logger.error("Error setting socket identity. {}".format(zmqerror))
 
         if not remote:
             msg = 'no socket_address provided'
@@ -76,14 +76,15 @@ class AsyncCommunication(threading.Thread):
 
         socket_address = 'tcp://{}'.format(remote)
 
-        print("Connecting to {}".format(socket_address))
+        logger.info("Connecting to {}".format(socket_address))
         try:
             self.client.connect(socket_address)
             self.poller.register(self.client, zmq.POLLIN)
         except zmq.ZMQError as zmqerror:
-            print("Error connecting client socket. {}".format(zmqerror))
+            logger.error("Error connecting client socket. {}".format(zmqerror))
+            raise zmqerror
 
-        print('sending {} to {}'.format(request, socket_address))
+        logger.debug('sending {} to {}'.format(request, socket_address))
         await self.client.send_multipart([msgpack.packb(request, encoding='utf-8')])
         self.poller.unregister(self.client)
         self.client.close()
@@ -95,20 +96,20 @@ class AsyncCommunication(threading.Thread):
             raise ValueError(msg)
         if self.identity is None:
             self.identity = local_address.encode()
-        print('Server listening on address tcp://{}.'.format(local_address))
+        logger.debug('Server listening on address tcp://{}.'.format(local_address))
 
         self.server = self.context.socket(zmq.ROUTER)
         self.server.bind('tcp://{}'.format(local_address))
         self.poller.register(self.server, zmq.POLLIN)
-        print('running server')
+        logger.info('running server')
         while self.running:
             items = dict(await self.poller.poll(self.timeout))
             if self.server in items and items[self.server] == zmq.POLLIN:
-                print("receiving at server")
+                logger.debug("receiving at server")
                 ident, msg = await self.server.recv_multipart()
                 msg = msgpack.unpackb(msg, encoding='utf-8')
                 ident = msgpack.unpackb(ident, encoding='utf-8')
-                print('server received {} from {}'.format(msg, ident))
+                logger.debug('server received {} from {}'.format(msg, ident))
                 await self.loop.run_in_executor(self.executor,
                                                 callback,
                                                 msg,
@@ -117,7 +118,7 @@ class AsyncCommunication(threading.Thread):
                 # await self.server.send_multipart(msg)
             if self.client in items and items[self.client] == zmq.POLLIN:
                 ident, msg = await self.client.recv_multipart()
-                print('received ack at client socket')
+                logger.debug('received ack at client socket')
                 #TODO Should this be further handled?
                 msg = msgpack.unpackb(msg, encoding='utf-8')
                 ident = msgpack.unpackb(ident, encoding='utf-8')
@@ -126,15 +127,15 @@ class AsyncCommunication(threading.Thread):
                                                 msg,
                                                 ident)
 
-        print("stopping server")
+        logger.info("stopping server")
         self.poller.unregister(self.server)
         self.server.close()
 
     def send(self, request, remote=None):
-        print("send {} to {}".format(request, remote))
+        logger.debug("send {} to {}".format(request, remote))
         asyncio.run_coroutine_threadsafe(
             self._send(request, remote=remote), self.loop)
 
     def stop(self):
-        print("Stopping AsyncCommThread")
+        logger.info("Stopping AsyncCommThread")
         self.running = False
