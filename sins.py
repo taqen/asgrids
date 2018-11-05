@@ -34,7 +34,7 @@ class Agent():
         logger.info("Started agent's infinite loop")
         try:
             self.env.run(until=self.running)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, simpy.Interrupt):
             #if not self.running.processed:
             #    self.running.interrupt()
             self.stop()
@@ -89,6 +89,9 @@ class Agent():
         for _,v in self.timeouts.items():
             if not v.processed and not v.triggered:
                 v.interrupt()
+        if len(self.timeouts) > 0:
+            logger.info("remained {} timeouts not interrupted".format(len(self.timeouts)))
+        self.running.interrupt()
 
     def create_timeout(self, timeout, event_id, msg=''):
         event = self.env.event()
@@ -118,8 +121,9 @@ class NetworkAllocator(Agent):
         self.comm = AsyncCommunication(callback=self.receive_handle, local_address=local)
         self.comm.start()
         self.loads = {}
-        self.alloc_ack_timeout = 5
+        self.alloc_ack_timeout = 2
         self.stop_ack_tiemout = 5
+        logger.info("NetworkAllocator - Initializing NetworkAllocator {}".format(self.local))
         super(NetworkAllocator, self).__init__(env=env)
 
     def initialise(self):
@@ -134,7 +138,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        logger.debug("NetworkAllocator handling {} from {}".format(data, src))
+        logger.debug("NetworkAllocator - handling {} from {}".format(data, src))
         msg_type = data['msg_type']
         if msg_type == 'join':
             agent_id = data['agent_id']
@@ -148,7 +152,7 @@ class NetworkAllocator(Agent):
             # Interrupting timeout event for this allocation
             event_id = hashlib.md5('allocation {} {}'.format(
                 allocation['allocation_id'], src).encode()).hexdigest()
-            logger.debug("Cancelling event {}".format(event_id))
+            logger.debug("NetworkAllocator - Cancelling event {}".format(event_id))
             self.cancel_timeout(event_id)
         elif msg_type == 'leave':
             agent_id = data['agent_id']
@@ -158,6 +162,7 @@ class NetworkAllocator(Agent):
         if msg_type == 'stop_ack':
             event_id = hashlib.md5('stop {}'.format(src).encode()).hexdigest()
             self.cancel_timeout(event_id)
+            self.remove_load(load_id=src)
 
     def add_load(self, load_id, allocation):
         """ Add a network load to Allocator's known loads list.
@@ -168,7 +173,15 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        self.loads[load_id] = allocation
+        logger.info("NetworkAllocator - adding load {}".format(load_id))
+        if load_id in self.loads:
+            msg = "NetworkAllocator - load {} already added".format(load_id)
+            if allocation['allocation_value'] != self.loads[load_id]['allocation_value']:
+                msg = "{} - updated allocation from {} to {}".format(msg, self.loads[load_id], allocation)
+                self.loads[load_id] = allocation
+            logger.info(msg)
+        else:
+            self.loads[load_id] = allocation
 
     def remove_load(self, load_id):
         """ Remove a load from Allocator's known loads list.
@@ -178,6 +191,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
+        logger.info("NetworkAllocator - Removing load {}".format(load_id))
         return self.loads.pop(load_id, None)
 
     def send_allocation(self, agent_id, allocation):
@@ -189,7 +203,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        logger.info("sending allocation to {}".format(agent_id))
+        logger.info("NetworkAllocator - sending allocation to {}".format(agent_id))
         packet = {'msg_type': 'allocation', 'allocation': allocation}
 
         # Creating Event that is triggered if no ack is received before a timeout
@@ -197,7 +211,7 @@ class NetworkAllocator(Agent):
         noack_event = self.create_timeout(
             event_id=event_id,
             timeout=self.alloc_ack_timeout,
-            msg='no ack from {} for allocation {}'.format(
+            msg='NetworkAllocator - no ack from {} for allocation {}'.format(
                 agent_id, allocation['allocation_id']))
         self.timeouts[event_id] = noack_event
         self.schedule(
@@ -215,7 +229,7 @@ class NetworkAllocator(Agent):
 
         """
         packet = {'msg_type': 'join_ack'}
-        logger.info("sending join ack")
+        logger.info("NetworkAllocator - {} sending join ack to {}".format(self.local, dst))
         self.comm.send(packet, remote=dst)
 
     def stop_network(self):
@@ -228,32 +242,33 @@ class NetworkAllocator(Agent):
 
         """
         packet = {'msg_type': 'stop'}
-
+        logger.info("NetworkAllocator - Stopping these loads {}".format(self.loads))
         # Stopping register loads
         for load in self.loads:
             proc = self.schedule(
                 self.comm.send, args={
                     'request': packet,
                     'remote': load
-                })
-            proc.callbacks.append(lambda e: logger.info("Sent stop to %s"%load))
+                }, value=load)
+            proc.callbacks.append(lambda e: logger.info("NetworkAllocator - Sent stop to {}".format(e.value)))
             event_id = hashlib.md5('stop {}'.format(load).encode()).hexdigest()
             noack_event = self.create_timeout(
                 timeout=self.stop_ack_tiemout,
-                msg="NetworkLoad stop, no ack",
+                msg="NetworkAllocator - no stop_ack from {}".format(load),
                 event_id=event_id)
             self.timeouts[event_id] = noack_event
 
         proc = self.schedule(self.stop, time=self.stop_ack_tiemout)
-        proc.callbacks.append(
-            lambda event: map(lambda timeout: timeout.interrupt(), self.timeouts)
-        )
-        proc.callbacks.append(lambda event: self.running.interrupt())
+        # proc.callbacks.append(
+        #     lambda event: map(lambda timeout: timeout.interrupt(), self.timeouts)
+        # )
+        #proc.callbacks.append(lambda event: self.running.interrupt())
 
     def stop(self):
         # Stop underlying simpy event loop
         super(NetworkAllocator, self).stop()
         # Inform AsyncCommThread we are stopping
+        logger.info("NetworkAllocator - Stopping AsyncCommThread")
         self.comm.stop()
         # Wait for asyncio thread to cleanup properly
         self.comm.join()
@@ -268,6 +283,8 @@ class NetworkLoad(Agent):
                                        local_address=local,
                                        identity=self.agent_id)
         self.comm.start()
+        logger.info("NetworkLoad {} - Initializing".format(self.local))
+
         super(NetworkLoad, self).__init__(env=env)
 
     def receive_handle(self, data, src):
@@ -279,10 +296,10 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        logger.info("NetworkLoad handling {} from {}".format(data, src))
+        logger.info("NetworkLoad {} - handling {} from {}".format(self.agent_id, data, src))
         msg_type = data['msg_type']
         if msg_type == 'join_ack':
-            logger.info("Joined successfully allocator at %s"%src)
+            logger.info("NetworkLoad {} - Joined successfully allocator {}".format(self.agent_id, src))
         if msg_type == 'allocation':
             allocation = data['allocation']
             logger.debug("allocation={}".format(allocation))
@@ -311,10 +328,29 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        duration = allocation['duration']
-        value = allocation['allocation_value']
-        logger.info("Current load is {}".format(value))
-        yield self.env.timeout(duration)
+        logger.info(
+            "NetworkLoad {} - Current load is {}".format(
+            self.agent_id,
+            self.curr_allocation['allocation_value'])
+            )
+
+        self.curr_allocation = allocation.copy()
+
+        logger.info(
+            "NetworkLoad {} - Updated load is {}".format(
+            self.agent_id,
+            allocation['allocation_value'])
+            )
+        yield self.env.timeout(0)
+        #yield self.env.timeout(allocation['duration'])
+
+    def report_allocation(self):
+        packet = {
+            'agent_id':self.agent_id,
+            'msg_type':'curr_allocation',
+            'allocation':self.curr_allocation
+            }
+        self.schedule(self.comm.send, args={'request':packet, 'remote':self.remote})
 
     def join_ack_handle(self):
         """ handle received join ack
@@ -357,7 +393,7 @@ class NetworkLoad(Agent):
         self.schedule(self.comm.send, args={"request":packet, "remote":dst})
 
     def send_leave(self, dst):
-        logger.info("NetworkLoad {} Leaving {}".format(self.agent_id, dst))
+        logger.info("NetworkLoad {} - Leaving {}".format(self.agent_id, dst))
         packet = {
             'agent_id': self.agent_id,
             'msg_type': 'leave'
