@@ -163,6 +163,10 @@ class NetworkAllocator(Agent):
             event_id = hashlib.md5('stop {}'.format(src).encode()).hexdigest()
             self.cancel_timeout(event_id)
             self.remove_load(load_id=src)
+        if msg_type == 'curr_allocation':
+            agent_id = data['agent_id']
+            allocation = data['allocation']
+            self.add_load(load_id=agent_id, allocation=allocation)
 
     def add_load(self, load_id, allocation):
         """ Add a network load to Allocator's known loads list.
@@ -350,6 +354,8 @@ class NetworkLoad(Agent):
             'msg_type':'curr_allocation',
             'allocation':self.curr_allocation
             }
+        logger.info("NetworkLoad {} - Reporting allocation {} to {}".format(
+            self.agent_id, self.curr_allocation, self.remote))
         self.schedule(self.comm.send, args={'request':packet, 'remote':self.remote})
 
     def join_ack_handle(self):
