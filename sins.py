@@ -46,10 +46,10 @@ class Agent():
             try:
                 yield self.env.timeout(1e-2)
             except simpy.Interrupt:
-                logger.debug("Agent._run interrupted")
+                logger.info("Agent._run interrupted")
                 break
 
-    def schedule(self, action, args=None, time=0):
+    def schedule(self, action, args=None, time=0, value=None):
         """ The agent's schedule function
 
         :param time: relative time from present to execute action
