@@ -77,11 +77,18 @@ class ElectricalSimulator:
     def broadcast(self):
         res_load = self.net.res_load
 
-        allocation_value = res_load['p_kw'][0]
-        allocation_value= allocation_value.item()
-        allocation = {'allocation_id':self.allocation_id[0], 'duration':0, 'allocation_value':allocation_value}
-        self.allocation_id[0] += 1
-        self.allocator.schedule(self.allocator.send_allocation, args={'agent_id':self.loads[0].agent_id, 'allocation':allocation})
+        for l in self.loads:
+            allocation_value = res_load['p_kw'][l]
+            allocation_value= allocation_value.item()
+            allocation = {'allocation_id':self.allocation_id[l], 'duration':0, 'allocation_value':allocation_value}
+            self.allocation_id[l] += 1
+            self.allocator.schedule(self.allocator.send_allocation, args={'agent_id':self.loads[l].agent_id, 'allocation':allocation})
+
+    def collect(self):
+        print("Collecting network allocations")
+        for l in self.loads:
+            v = self.allocator.loads[self.loads[l].agent_id]['allocation_value']
+            self.net.load['p_kw'][l] = v
 
 elec = ElectricalSimulator()
 elec.bootstrap()
@@ -92,8 +99,9 @@ elec.connect_network()
 #elec.optimize_pf()
 sleep(5)
 res = elec.optimize_pf()
+print(res.load['p_kw'])
 elec.broadcast()
+sleep(5)
 elec.collect()
-
-print(res.load)
-#print(type(res.res_load['p_kw'][0]))
+res = elec.optimize_pf()
+print(res.load['p_kw'])
