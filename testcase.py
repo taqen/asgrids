@@ -25,12 +25,24 @@ class ElectricalSimulator:
         self.bus[4] = pp.create_bus(self.net, vn_kv=110.)
 
         # create 220/110 kV transformer
-        pp.create_transformer(self.net, self.bus[1], self.bus[2], std_type="100 MVA 220/110 kV")
+        pp.create_transformer(
+            self.net, self.bus[1], self.bus[2], 
+            std_type="100 MVA 220/110 kV"
+            )
 
         # create 110 kV lines
-        pp.create_line(self.net, self.bus[2], self.bus[3], length_km=70., std_type='149-AL1/24-ST1A 110.0')
-        pp.create_line(self.net, self.bus[3], self.bus[4], length_km=50., std_type='149-AL1/24-ST1A 110.0')
-        pp.create_line(self.net, self.bus[4], self.bus[2], length_km=40., std_type='149-AL1/24-ST1A 110.0')
+        pp.create_line(
+            self.net, self.bus[2], self.bus[3], 
+            length_km=70., std_type='149-AL1/24-ST1A 110.0'
+            )
+        pp.create_line(
+            self.net, self.bus[3], self.bus[4], 
+            length_km=50., std_type='149-AL1/24-ST1A 110.0'
+            )
+        pp.create_line(
+            self.net, self.bus[4], self.bus[2], 
+            length_km=40., std_type='149-AL1/24-ST1A 110.0'
+            )
 
     def optimize_pf(self):
         pp.runopp(self.net, verbose=True)
@@ -44,12 +56,29 @@ class ElectricalSimulator:
 
     def create_loads(self):
         # create generators
-        eg = pp.create_ext_grid(self.net, self.bus[1], min_p_kw=-1e9, max_p_kw=1e9)
-        g0 = pp.create_gen(self.net, self.bus[3], p_kw=-80 * 1e3, min_p_kw=-80e3, max_p_kw=0, vm_pu=1.01, controllable=True)
-        g1 = pp.create_gen(self.net, self.bus[4], p_kw=-100 * 1e3, min_p_kw=-100e3, max_p_kw=0, vm_pu=1.01, controllable=True)
-        costeg = pp.create_polynomial_cost(self.net, 0, 'ext_grid', np.array([-1, 0]))
-        costgen1 = pp.create_polynomial_cost(self.net, 0, 'gen', np.array([-1, 0]))
-        costgen2 = pp.create_polynomial_cost(self.net, 1, 'gen', np.array([-1, 0]))
+        eg = pp.create_ext_grid(
+            self.net, self.bus[1], min_p_kw=-1e9, 
+            max_p_kw=1e9
+            )
+        g0 = pp.create_gen(
+            self.net, self.bus[3], p_kw=-80 * 1e3, 
+            min_p_kw=-80e3, max_p_kw=0, vm_pu=1.01, 
+            controllable=True
+            )
+        g1 = pp.create_gen(
+            self.net, self.bus[4], p_kw=-100 * 1e3, 
+            min_p_kw=-100e3, max_p_kw=0, vm_pu=1.01, 
+            controllable=True
+            )
+        costeg = pp.create_polynomial_cost(
+            self.net, 0, 'ext_grid', np.array([-1, 0])
+            )
+        costgen1 = pp.create_polynomial_cost(
+            self.net, 0, 'gen', np.array([-1, 0])
+            )
+        costgen2 = pp.create_polynomial_cost(
+            self.net, 1, 'gen', np.array([-1, 0])
+            )
 
         # create loads
         loads = [
@@ -58,34 +87,46 @@ class ElectricalSimulator:
             pp.create_load(self.net, self.bus[3], p_kw=70e3, controllable=False),
             pp.create_load(self.net, self.bus[4], p_kw=10e3, controllable=False)
             ]
-
+        # Create associated NetworkLoad agents
         for l in loads:
-            local = '127.0.0.1:500{}'.format(l)
-            self.loads[l] = NetworkLoad(local=local, remote='127.0.0.1:5555')
+            self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
             self.executor.submit(self.loads[l].run)
             self.allocation_id[l] = 0
 
     def connect_network(self):
         for l in self.loads:
             self.loads[l].schedule(action=self.loads[l].send_join,
-                    args={'dst':'127.0.0.1:5555'}, time=l)
+                    args={'dst':self.allocator.local}, time=l)
 
     def stop(self):
         self.allocator.stop_network()
+        self.allocator = None
         self.executor.shutdown()
-    
+
     def broadcast(self):
         res_load = self.net.res_load
 
         for l in self.loads:
             allocation_value = res_load['p_kw'][l]
             allocation_value= allocation_value.item()
-            allocation = {'allocation_id':self.allocation_id[l], 'duration':0, 'allocation_value':allocation_value}
+            allocation = {
+                'allocation_id':self.allocation_id[l], 
+                'duration':0,
+                'allocation_value':allocation_value
+                }
             self.allocation_id[l] += 1
-            self.allocator.schedule(self.allocator.send_allocation, args={'agent_id':self.loads[l].agent_id, 'allocation':allocation})
+            self.allocator.schedule(
+                action=self.allocator.send_allocation, 
+                args={'agent_id':self.loads[l].agent_id, 'allocation':allocation}
+                )
+            
+            # Only update l == 0
+            break
 
     def collect(self):
         print("Collecting network allocations")
+        if self.allocator is None:
+            return
         for l in self.loads:
             v = self.allocator.loads[self.loads[l].agent_id]['allocation_value']
             self.net.load['p_kw'][l] = v
@@ -97,11 +138,24 @@ elec.create_loads()
 elec.connect_network()
 
 #elec.optimize_pf()
-sleep(5)
-res = elec.optimize_pf()
-print(res.load['p_kw'])
-elec.broadcast()
-sleep(5)
-elec.collect()
-res = elec.optimize_pf()
-print(res.load['p_kw'])
+def opf_loop():
+    while elec.allocator is not None:
+        sleep(5)
+        net = elec.optimize_pf()
+        print(net.res_load)
+        elec.broadcast()
+        sleep(5)
+        elec.collect()
+        print(net.load)
+
+def random_alloc(load):
+    while elec.allocator is not None:
+        v = random() * 1.0e5
+        allocation = {'alloaction_id':0, 'allocation_value':v, 'duration':0}
+        load.curr_allocation = allocation
+        load.schedule(action=load.report_allocation, time=0.5)
+        sleep(1)
+
+elec.executor.submit(opf_loop)
+elec.executor.submit(random_alloc, elec.loads[1])
+elec.executor.submit(random_alloc, elec.loads[2])
