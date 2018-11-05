@@ -60,11 +60,11 @@ class Agent():
         """
         logger.debug("scheduling action {}".format(action))
         return self.env.process(
-            self.process(action=action, args=args, time=time))
+            self.process(action=action, args=args, time=time, value=value))
 
-    def process(self, action, args, time=0):
+    def process(self, action, args, time=0, value=None):
         try:
-            yield self.env.timeout(time)
+            value = yield self.env.timeout(time, value=value)
         except simpy.Interrupt:
             logger.debug("Interrupted action {}".format(action))
             return
@@ -74,6 +74,7 @@ class Agent():
             action()
         else:
             action(**args)
+        return value
 
     def stop(self):
         """ stop the Agent.
