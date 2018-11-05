@@ -176,7 +176,7 @@ class NetworkAllocator(Agent):
         logger.info("NetworkAllocator - adding load {}".format(load_id))
         if load_id in self.loads:
             msg = "NetworkAllocator - load {} already added".format(load_id)
-            if allocation['allocation_value'] != self.loads[load_id]['allocation_value']:
+            if self.loads[load_id] == 0 or allocation['allocation_value'] != self.loads[load_id]['allocation_value']:
                 msg = "{} - updated allocation from {} to {}".format(msg, self.loads[load_id], allocation)
                 self.loads[load_id] = allocation
             logger.info(msg)
