@@ -92,7 +92,7 @@ class ElectricalSimulator:
             self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
             self.executor.submit(self.loads[l].run)
             self.allocation_id[l] = 0
-
+        self.loads[0].curr_allocation = {'allocation_id':0, 'allocation_value':70e3, 'allocation_duration':0}
     def connect_network(self):
         for l in self.loads:
             self.loads[l].schedule(action=self.loads[l].send_join,
@@ -104,10 +104,12 @@ class ElectricalSimulator:
         self.executor.shutdown()
 
     def broadcast(self):
-        res_load = self.net.res_load
+        if self.allocator is None:
+            return
 
+        print("Broadcasting OPF results")
         for l in self.loads:
-            allocation_value = res_load['p_kw'][l]
+            allocation_value = self.net.res_load['p_kw'][l]
             allocation_value= allocation_value.item()
             allocation = {
                 'allocation_id':self.allocation_id[l], 
