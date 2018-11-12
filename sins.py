@@ -26,12 +26,12 @@ class Agent():
 
         :param env: a simpy simulation environment
         """
-        self.env = simpy.rt.RealtimeEnvironment(strict=False) if env is None else env
+        self.env = simpy.rt.RealtimeEnvironment(strict=True) if env is None else env
         self.timeouts = {}
         self.running = self.env.process(self._run())
 
     def run(self):
-        logger.info("Started agent's infinite loop")
+        logger.info("Agent - Started agent's infinite loop")
         try:
             self.env.run(until=self.running)
         except (KeyboardInterrupt, simpy.Interrupt):
