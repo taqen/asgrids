@@ -11,10 +11,8 @@ import csv
 class ElectricalSimulator:
     """ Simulate a communicating policy allocator
     """
-    def __init__(self, net=None):
+    def __init__(self):
         self.net = net
-        if net is None:
-            self.net = pp.create_empty_network()
         self.loads = {}
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.allocation_id = {}
@@ -28,9 +26,10 @@ class ElectricalSimulator:
         signal.signal(signal.SIGINT, handler)
         self.executor.submit(self.allocator.run)
 
-    def add_loads(self, loads: list):
-        # Create associated NetworkLoad agents
-        for l in loads:
+    def create_network(self, net):
+        assert net != None and hasattr(net, 'load') and len(net.load) > 0
+        self.net = net
+        for l in list(self.net.load.index):
             self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
             self.executor.submit(self.loads[l].run)
             self.allocation_id[l] = 0
@@ -132,14 +131,14 @@ loads = [
     pp.create_load(net, bus[2], p_kw=10e3, controllable=False)
 ]
 
-elec = ElectricalSimulator(net=net)
+elec = ElectricalSimulator()
+elec.create_network(net)
 elec.create_allocator()
-elec.add_loads(loads)
 elec.connect_network()
 
 def random_alloc(load):
     while elec.allocator is not None:
-        v = load.curr_allocation['allocation_value'] #random() * 1.0e5
+        v = random() * 1.0e5
         allocation = {'alloaction_id':0, 'allocation_value':v, 'duration':0}
         load.curr_allocation = allocation
         load.schedule(action=load.allocation_report, time=0.5)
@@ -163,7 +162,7 @@ def load_csv(load, file):
         reader = csv.reader(csvfile, delimiter=',')
         for row in reader:
             if row[0] != 'timedelta' and float(row[1]) != 0 :
-                loads.append([float(row[0]), float(row[1]), float(row[2])])
+                loads.append([float(row[0]), float(row[1])*1e3])
         
         for i in range(0, len(loads)):
             loads[i][0] = i+1
