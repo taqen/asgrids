@@ -46,7 +46,7 @@ class Agent():
             try:
                 yield self.env.timeout(1e-2)
             except simpy.Interrupt:
-                logger.info("Agent._run interrupted")
+                logger.info("Agent - Agent._run interrupted")
                 break
 
     def schedule(self, action, args=None, time=0, value=None):
@@ -58,7 +58,7 @@ class Agent():
         :rtype:
 
         """
-        logger.debug("scheduling action {}".format(action))
+        logger.debug("Agent - scheduling action {}".format(action))
         return self.env.process(
             self.process(action=action, args=args, time=time, value=value))
 
@@ -66,10 +66,10 @@ class Agent():
         try:
             value = yield self.env.timeout(time, value=value)
         except simpy.Interrupt:
-            logger.debug("Interrupted action {}".format(action))
+            logger.debug("Agent - Interrupted action {}".format(action))
             return
 
-        logger.debug("executing action {} after {} seconds".format(action, time))
+        logger.debug("Agent - executing action {} after {} seconds".format(action, time))
         if args is None:
             action()
         else:
@@ -85,18 +85,18 @@ class Agent():
 
         """
 
-        logger.debug("interrupting pending timeouts")
+        logger.debug("Agent - interrupting pending timeouts")
         for _,v in self.timeouts.items():
             if not v.processed and not v.triggered:
                 v.interrupt()
         if len(self.timeouts) > 0:
-            logger.info("remained {} timeouts not interrupted".format(len(self.timeouts)))
+            logger.info("Agent - remained {} timeouts not interrupted".format(len(self.timeouts)))
         self.running.interrupt()
 
     def create_timeout(self, timeout, event_id, msg=''):
         event = self.env.event()
         event.callbacks.append(
-            lambda event: logger.info("timeout expired\n {}".format(msg)))
+            lambda event: logger.info("Agent - timeout expired\n {}".format(msg)))
         event.callbacks.append(
             lambda event: self.cancel_timeout(event_id))
         event_process = self.schedule(
@@ -345,10 +345,10 @@ class NetworkLoad(Agent):
             self.agent_id,
             allocation['allocation_value'])
             )
-        yield self.env.timeout(0)
+        #yield self.env.timeout(0)
         #yield self.env.timeout(allocation['duration'])
 
-    def report_allocation(self):
+    def allocation_report(self):
         packet = {
             'agent_id':self.agent_id,
             'msg_type':'curr_allocation',
