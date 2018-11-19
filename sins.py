@@ -7,6 +7,8 @@ from abc import abstractmethod
 import hashlib
 import simpy
 import logging
+from async_communication import AsyncCommunication
+from defs import Allocation, Packet
 
 logger = logging.getLogger('SINS')
 logger.setLevel(logging.INFO)
@@ -16,8 +18,7 @@ ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-
-from async_communication import AsyncCommunication
+   
 
 # A generic Network Agent.
 class Agent():
@@ -125,9 +126,6 @@ class NetworkAllocator(Agent):
         self.stop_ack_tiemout = 5
         logger.info("NetworkAllocator - Initializing NetworkAllocator {}".format(self.local))
         super(NetworkAllocator, self).__init__(env=env)
-
-    def initialise(self):
-        pass
 
     def receive_handle(self, data, src):
         """ Handle packets received and decoded at the AsyncCommunication layer.
