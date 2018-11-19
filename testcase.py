@@ -1,12 +1,20 @@
 from sins import NetworkAllocator, NetworkLoad
 from concurrent.futures import ThreadPoolExecutor
+import logging
 import signal
 from time import sleep
 from random import random
-from itertools import dropwhile
 import pandapower as pp
 import numpy as np
 import csv
+
+logger = logging.getLogger('ElectricalSimulation')
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
 class ElectricalSimulator:
     """ Simulate a communicating policy allocator
@@ -53,9 +61,9 @@ class ElectricalSimulator:
         if self.allocator is None:
             raise RuntimeError("no allocator")
 
-        print("Broadcasting OPF results")
+        logger.info("Broadcasting OPF results")
         for l in self.loads:
-            if self.net.load['controllable'][l] is True:
+            if self.net.load['controllable'][l] == True:
                 allocation_value = self.net.res_load['p_kw'][l].item()
                 allocation = {
                     'allocation_id':self.allocation_id[l], 
@@ -71,11 +79,11 @@ class ElectricalSimulator:
     def collect(self): 
         if self.allocator is None:
             raise RuntimeError("no allocator")
-        print("Collecting network allocations")
+        logger.info("Collecting network allocations")
 
         for l in self.loads:
             v = self.allocator.loads[self.loads[l].agent_id]['allocation_value']
-            net.load['p_kw'][l] = v
+            self.net.load['p_kw'][l] = v
 
 net = pp.create_empty_network()
 # create buses
@@ -136,6 +144,9 @@ elec.create_network(net)
 elec.create_allocator()
 elec.connect_network()
 
+
+# Allocation generators
+## Random behavior
 def random_alloc(load):
     while elec.allocator is not None:
         v = random() * 1.0e5
@@ -144,17 +155,7 @@ def random_alloc(load):
         load.schedule(action=load.allocation_report, time=0.5)
         sleep(1)
 
-def opf_loop():
-    while elec.allocator is not None:
-        sleep(5)
-        elec.optimize_pf()
-        print(elec.net.res_load)
-        print(elec.net.res_gen)
-        elec.broadcast()        
-        sleep(5)
-        elec.collect()
-        print(elec.net.load)
-
+## Table read
 def load_csv(load, file):
     # Data prepation
     loads = []
@@ -162,7 +163,7 @@ def load_csv(load, file):
         reader = csv.reader(csvfile, delimiter=',')
         for row in reader:
             if row[0] != 'timedelta' and float(row[1]) != 0 :
-                loads.append([float(row[0]), float(row[1])*1e3])
+                loads.append([float(row[0]), float(row[1])])
         
         for i in range(0, len(loads)):
             loads[i][0] = i+1
@@ -172,6 +173,19 @@ def load_csv(load, file):
         allocation = {'alloaction_id':0, 'allocation_value':v[1], 'duration':0}
         load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
         load.schedule(action=load.allocation_report, time=v[0])
+
+
+## main loop
+def opf_loop():
+    while elec.allocator is not None:
+        sleep(5)
+        elec.optimize_pf()
+        logger.info('OPF loads result\n{}'.format(elec.net.res_load))
+        logger.info('OPF generators result\n{}'.format(elec.net.res_gen))
+        elec.broadcast()        
+        sleep(5)
+        elec.collect()
+        logger.info('\n{}'.format(elec.net.load))
 
 elec.executor.submit(opf_loop)
 elec.executor.submit(random_alloc, elec.loads[1])
