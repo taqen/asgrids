@@ -121,6 +121,7 @@ class NetworkAllocator(Agent):
 
     def __init__(self, local='127.0.0.1:5555', env=None):
         self.local = local
+        self.nid = local
         self.comm = AsyncCommunication(callback=self.receive_handle, local_address=local)
         self.comm.start()
         self.nodes = {}
@@ -239,7 +240,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        packet = Packet('stop')
+        packet = Packet(ptype='stop', src=self.nid)
         # Stopping register nodes
         for node in self.nodes:
             proc = self.schedule(
@@ -248,7 +249,7 @@ class NetworkAllocator(Agent):
                     'remote': node
                 }, value=node)
             proc.callbacks.append(lambda e: logger.info("Sent stop to {}".format(e.value)))
-            eid = EventId(packet)
+            eid = EventId(packet, node)
             noack_event = self.create_timer(
                 timeout=self.stop_ack_tiemout,
                 msg="no stop_ack from {}".format(node),
