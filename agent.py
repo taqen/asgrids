@@ -5,10 +5,10 @@ from async_communication import AsyncCommunication
 from defs import Packet, Allocation, EventId
 import logging
 logger = logging.getLogger('Agent')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
+ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 # A generic Network Agent.

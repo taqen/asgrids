@@ -14,10 +14,10 @@ class NetworkAllocator(Agent):
         self.comm.start()
         self.nodes = {}
         self.alloc_ack_timeout = 2
-        self.stop_ack_tiemout = 5
+        self.stop_ack_timeout = 5
         super(NetworkAllocator, self).__init__(env=env)
 
-        loggername = 'NetworkAllocator.{}'.format(local.split(':')[1])
+        loggername = 'Agent.NetworkAllocator.{}'.format(local.split(':')[1])
         self.logger = logging.getLogger(loggername)
         self.logger.info("Initializing NetworkAllocator")
 
@@ -142,13 +142,13 @@ class NetworkAllocator(Agent):
             proc.callbacks.append(lambda e: self.logger.info("Sent stop to {}".format(e.value)))
             eid = EventId(packet, node)
             noack_event = self.create_timer(
-                timeout=self.stop_ack_tiemout,
+                timeout=self.stop_ack_timeout,
                 msg="no stop_ack from {}".format(node),
                 eid=eid)
             self.timeouts[eid] = noack_event
             self.logger.info("Stopping {}".format(node))
 
-        proc = self.schedule(self.stop, time=self.stop_ack_tiemout)
+        proc = self.schedule(self.stop, time=self.stop_ack_timeout)
 
     def stop(self):
         # Stop underlying simpy event loop

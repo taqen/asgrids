@@ -54,6 +54,7 @@ class NetworkLoad(Agent):
             )
             #proc.callbacks.append(self.stop)
             # Too much events at same time breaks realtime
+            self.logger.info("Scheduling stop")
             self.schedule(action=self.stop, time=1)
 
     def allocation_handle(self, allocation):
@@ -83,8 +84,7 @@ class NetworkLoad(Agent):
     def allocation_report(self):
         packet = Packet('curr_allocation', self.curr_allocation, self.nid)
 
-        self.logger.info("Reporting allocation {} to {}".format(
-            self.nid, self.curr_allocation, self.remote))
+        self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
 
         self.comm.send(packet, self.remote)
 

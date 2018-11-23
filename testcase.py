@@ -1,9 +1,12 @@
-from sins import NetworkAllocator, NetworkLoad
+# from sins import NetworkAllocator, NetworkLoad
+from network_allocator import NetworkAllocator
+from network_load import NetworkLoad
 from concurrent.futures import ThreadPoolExecutor as Executor
 import logging
 import signal
 from time import sleep
 from random import random
+from itertools import dropwhile
 import pandapower as pp
 import numpy as np
 import csv
@@ -12,15 +15,11 @@ from defs import Allocation
 
 logger = logging.getLogger('ElectricalSimulation')
 logger.setLevel(logging.INFO)
-fh = logging.FileHandler('elec.log')
-fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
-fh.setFormatter(formatter)
 logger.addHandler(ch)
-logger.addHandler(fh)
 
 class ElectricalSimulator:
     """ Simulate a communicating policy allocator
@@ -86,7 +85,7 @@ class ElectricalSimulator:
             return
         logger.info("Broadcasting OPF results")
         for l in self.loads:
-            if self.net.load['controllable'][l] == True:
+            if self.net.load['controllable'][l] is True:
                 allocation_value = self.net.res_load['p_kw'][l].item()
                 allocation = Allocation(self.allocation_id[l], allocation_value, 0)
                 self.allocation_id[l] += 1
@@ -189,16 +188,19 @@ def load_csv(load, file):
         reader = csv.reader(csvfile, delimiter=',')
         for row in reader:
             if row[0] != 'timedelta' and float(row[1]) != 0 :
-                loads.append([float(row[0]), float(row[1])])
+                loads.append([float(row[0]), float(row[1])*1e3])
         
         for i in range(0, len(loads)):
             loads[i][0] = i+1
     # Scheduling allocation
     while elec.running and len(loads) > 0:
-        v = loads.pop(0)
-        allocation = Allocation(0, v[1], 0)
-        load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
-        load.schedule(action=load.allocation_report, time=v[0])
+        if load.running:
+            v = loads.pop(0)
+            allocation = Allocation(0, v[1], 0)
+            load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
+            load.schedule(action=load.allocation_report, time=v[0])
+        else:
+            logger.info("node {} stopped".format(load.nid))
 
 
 ## main loop
@@ -214,8 +216,6 @@ def opf_loop():
         elec.collect()
         logger.info('\n{}'.format(elec.net.load))
 
-#sleep(3)
 elec.executor.submit(opf_loop)
 elec.executor.submit(random_alloc, elec.loads[1])
-elec.executor.submit(load_csv, elec.loads[2], 'PV_Nelly_House_1.csv')
-#opf_loop()
+# elec.executor.submit(load_csv, elec.loads[2], 'PV_Nelly_House_1.csv')
