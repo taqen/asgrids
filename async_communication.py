@@ -8,10 +8,16 @@ import zmq
 import zmq.asyncio
 from concurrent.futures import ThreadPoolExecutor
 import msgpack
+from defs import ext_pack, ext_unpack
 
 # Get the local logger
 logger = logging.getLogger('AsyncCommThread')
-
+# logger.setLevel(logging.DEBUG)
+# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ch = logging.StreamHandler()
+# ch.setLevel(logging.DEBUG)
+# ch.setFormatter(formatter)
+# logger.addHandler(ch)
 
 class AsyncCommunication(threading.Thread):
     def __init__(self, local_address, callback=None, identity=None):
@@ -84,8 +90,13 @@ class AsyncCommunication(threading.Thread):
             logger.error("Error connecting client socket. {}".format(zmqerror))
             raise zmqerror
 
-        logger.debug('sending {} to {}'.format(request, socket_address))
-        await self.client.send_multipart([msgpack.packb(request, encoding='utf-8')])
+        try:
+            p = msgpack.packb(request, default=ext_pack, strict_types=True, encoding='utf-8')
+        except Exception as e:
+            logger.error("Error packing {}".format(e))
+
+        logger.info('sending {} to {}'.format(request, socket_address))
+        await self.client.send_multipart([p])
         self.poller.unregister(self.client)
         self.client.close()
         self.client = None
@@ -107,26 +118,14 @@ class AsyncCommunication(threading.Thread):
             if self.server in items and items[self.server] == zmq.POLLIN:
                 logger.debug("receiving at server")
                 ident, msg = await self.server.recv_multipart()
-                msg = msgpack.unpackb(msg, encoding='utf-8')
+                p = msgpack.unpackb(msg, ext_hook=ext_unpack, encoding='utf-8')
                 ident = msgpack.unpackb(ident, encoding='utf-8')
-                logger.debug('server received {} from {}'.format(msg, ident))
+                logger.debug('server received {} from {}'.format(p, ident))
                 await self.loop.run_in_executor(self.executor,
                                                 callback,
-                                                msg,
+                                                p,
                                                 ident)
-                #TODO respond after server receive
-                # await self.server.send_multipart(msg)
-            if self.client in items and items[self.client] == zmq.POLLIN:
-                ident, msg = await self.client.recv_multipart()
-                logger.debug('received ack at client socket')
-                #TODO Should this be further handled?
-                msg = msgpack.unpackb(msg, encoding='utf-8')
-                ident = msgpack.unpackb(ident, encoding='utf-8')
-                await self.loop.run_in_executor(self.executor,
-                                                callback,
-                                                msg,
-                                                ident)
-
+        
         logger.info("stopping server")
         self.poller.unregister(self.server)
         self.server.close()
