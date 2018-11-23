@@ -1,5 +1,6 @@
 from sins import NetworkAllocator, NetworkLoad
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor as Executor
+import logging
 import signal
 from time import sleep
 from random import random
@@ -8,22 +9,55 @@ import pandapower as pp
 import numpy as np
 import csv
 
+from defs import Allocation
+
+logger = logging.getLogger('ElectricalSimulation')
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler('elec.log')
+fh.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(formatter)
+fh.setFormatter(formatter)
+logger.addHandler(ch)
+logger.addHandler(fh)
+
 class ElectricalSimulator:
     """ Simulate a communicating policy allocator
     """
     def __init__(self):
         self.net = net
         self.loads = {}
-        self.executor = ThreadPoolExecutor(max_workers=10)
+        self.executor = Executor(max_workers=10)
         self.allocation_id = {}
+        self.running = True
+        self.allocator = None
+        # handler = lambda signum, frame: self.stop()
+        signal.signal(signal.SIGINT, self.handle_signal)
 
-    def optimize_pf(self):
-        pp.runopp(self.net, verbose=True)
-    
+    def handle_signal(self, signum, frame):
+        logger.info("Captured interrupt")
+        if isinstance(self.allocator, NetworkAllocator):
+            self.allocator.stop_network()
+        elif self.running:
+            logger.info("Allocator not initialized")           
+        
+        if self.running:
+            self.stop()
+        else:
+            logger.info("Electrical Simulator not running")
+
+    def stop(self):
+        logger.info("Stopping ElectricalSimulator")
+        self.running = False
+        self.executor.shutdown()
+        print("ThreadPoolExecutor finished shutdown")
+        self.allocator = None
+
+
     def create_allocator(self):
         self.allocator = NetworkAllocator(local='127.0.0.1:5555')
-        handler = lambda signum, frame: self.stop()
-        signal.signal(signal.SIGINT, handler)
         self.executor.submit(self.allocator.run)
 
     def create_network(self, net):
@@ -33,49 +67,47 @@ class ElectricalSimulator:
             self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
             self.executor.submit(self.loads[l].run)
             self.allocation_id[l] = 0
-            self.loads[l].curr_allocation = {
-                'allocation_id':0, 
-                'allocation_value':self.net.load['p_kw'][l],
-                'allocation_duration':0
-                }
+            self.loads[l].curr_allocation = Allocation(0, self.net.load['p_kw'][l].item(), 0)
     
     def connect_network(self):
         for l in self.loads:
+            logger.info("---------------------------Connecting {}-------------------------".format(self.loads[l].nid))
             self.loads[l].schedule(action=self.loads[l].send_join,
-                    args={'dst':self.allocator.local}, time=l)
-
-    def stop(self):
-        self.allocator.stop_network()
-        self.allocator = None
-        self.executor.shutdown()
+                    args={'dst':self.allocator.local})
+    
+    def optimize_pf(self):
+        if self.running:
+            pp.runopp(self.net, verbose=True)
+        else:
+            logger.info("ElectricalSimulator not running")
 
     def broadcast(self):
-        if self.allocator is None:
-            raise RuntimeError("no allocator")
-
-        print("Broadcasting OPF results")
+        if not self.running:
+            logger.info("ElectricalSimulator not running")
+            return
+        logger.info("Broadcasting OPF results")
         for l in self.loads:
             if self.net.load['controllable'][l] is True:
                 allocation_value = self.net.res_load['p_kw'][l].item()
-                allocation = {
-                    'allocation_id':self.allocation_id[l], 
-                    'duration':0,
-                    'allocation_value':allocation_value
-                    }
+                allocation = Allocation(self.allocation_id[l], allocation_value, 0)
                 self.allocation_id[l] += 1
                 self.allocator.schedule(
                     action=self.allocator.send_allocation, 
-                    args={'agent_id':self.loads[l].agent_id, 'allocation':allocation}
+                    args={'agent_id':self.loads[l].nid, 'allocation':allocation}
                     )
 
     def collect(self): 
-        if self.allocator is None:
-            raise RuntimeError("no allocator")
-        print("Collecting network allocations")
-
+        if not self.running:
+            logger.info("ElectricalSimulator not running")
+            return
+        logger.info("Collecting network allocations")
+        logger.info(self.allocator.nodes)
         for l in self.loads:
-            v = self.allocator.loads[self.loads[l].agent_id]['allocation_value']
-            net.load['p_kw'][l] = v
+            try:
+                v = self.allocator.nodes[self.loads[l].nid].value
+                self.net.load['p_kw'][l] = v
+            except KeyError as k:
+                logger.error("node {} didn't join allocator yet".format(k))
 
 net = pp.create_empty_network()
 # create buses
@@ -136,26 +168,22 @@ elec.create_network(net)
 elec.create_allocator()
 elec.connect_network()
 
+
+# Allocation generators
+## Random behavior
 def random_alloc(load):
-    while elec.allocator is not None:
+    assert isinstance(elec, ElectricalSimulator)
+    while elec.running:
+        print("************************************************************************************************")
         v = random() * 1.0e5
-        allocation = {'alloaction_id':0, 'allocation_value':v, 'duration':0}
+        allocation = Allocation(0, v, 0)
         load.curr_allocation = allocation
         load.schedule(action=load.allocation_report, time=0.5)
         sleep(1)
 
-def opf_loop():
-    while elec.allocator is not None:
-        sleep(5)
-        elec.optimize_pf()
-        print(elec.net.res_load)
-        print(elec.net.res_gen)
-        elec.broadcast()        
-        sleep(5)
-        elec.collect()
-        print(elec.net.load)
-
+## Table read
 def load_csv(load, file):
+    assert isinstance(elec, ElectricalSimulator)
     # Data prepation
     loads = []
     with open(file, newline='') as csvfile:
@@ -167,13 +195,28 @@ def load_csv(load, file):
         for i in range(0, len(loads)):
             loads[i][0] = i+1
     # Scheduling allocation
-    while elec.allocator is not None and len(loads) > 0:
+    while elec.running and len(loads) > 0:
         v = loads.pop(0)
-        allocation = {'alloaction_id':0, 'allocation_value':v[1], 'duration':0}
+        allocation = Allocation(0, v[1], 0)
         load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
         load.schedule(action=load.allocation_report, time=v[0])
 
+
+## main loop
+def opf_loop():
+    assert isinstance(elec, ElectricalSimulator)
+    while elec.running:
+        sleep(5)
+        elec.optimize_pf()
+        logger.info('OPF loads result\n{}'.format(elec.net.res_load))
+        logger.info('OPF generators result\n{}'.format(elec.net.res_gen))
+        elec.broadcast()        
+        sleep(5)
+        elec.collect()
+        logger.info('\n{}'.format(elec.net.load))
+
+#sleep(3)
 elec.executor.submit(opf_loop)
 elec.executor.submit(random_alloc, elec.loads[1])
-elec.executor.submit(load_csv(elec.loads[2], 'PV_Nelly_House_1.csv'))
-
+elec.executor.submit(load_csv, elec.loads[2], 'PV_Nelly_House_1.csv')
+#opf_loop()
