@@ -113,22 +113,25 @@ class AsyncCommunication(threading.Thread):
         self.server.bind('tcp://{}'.format(local_address))
         self.poller.register(self.server, zmq.POLLIN)
         logger.info('running server')
-        while self.running:
-            items = dict(await self.poller.poll(self.timeout))
-            if self.server in items and items[self.server] == zmq.POLLIN:
-                logger.debug("receiving at server")
-                ident, msg = await self.server.recv_multipart()
-                p = msgpack.unpackb(msg, ext_hook=ext_unpack, encoding='utf-8')
-                ident = msgpack.unpackb(ident, encoding='utf-8')
-                logger.debug('server received {} from {}'.format(p, ident))
-                await self.loop.run_in_executor(self.executor,
-                                                callback,
-                                                p,
-                                                ident)
-        
-        logger.info("stopping server")
-        self.poller.unregister(self.server)
-        self.server.close()
+        try:
+            while self.running:
+                items = dict(await self.poller.poll(self.timeout))
+                if self.server in items and items[self.server] == zmq.POLLIN:
+                    logger.debug("receiving at server")
+                    ident, msg = await self.server.recv_multipart()
+                    p = msgpack.unpackb(msg, ext_hook=ext_unpack, encoding='utf-8')
+                    ident = msgpack.unpackb(ident, encoding='utf-8')
+                    logger.debug('server received {} from {}'.format(p, ident))
+                    await self.loop.run_in_executor(self.executor,
+                                                    callback,
+                                                    p,
+                                                    ident)
+        except KeyboardInterrupt:
+            logger.debug("async_communication loop interrupted")
+        finally:
+            logger.info("stopping server")
+            self.poller.unregister(self.server)
+            self.server.close()
 
     def send(self, request, remote=None):
         logger.debug("send {} to {}".format(request, remote))

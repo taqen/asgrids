@@ -2,6 +2,7 @@ from defs import Packet, Allocation, EventId
 from agent import Agent
 from async_communication import AsyncCommunication
 import logging
+import simpy
 logger = logging.getLogger('Agent.NetworkLoad')
 
 class NetworkLoad(Agent):
@@ -20,21 +21,21 @@ class NetworkLoad(Agent):
         self.logger = logging.getLogger(loggername)
         self.logger.info("initializing")
 
-    def receive_handle(self, data, src):
+    def receive_handle(self, p, src):
         """ Handled payload received from AsyncCommunication
 
-        :param data: payload received
+        :param p: payload received
         :param src: source of payload
         :returns:
         :rtype:
 
         """
-        self.logger.info("handling {} from {}".format(data, src))
-        msg_type = data.ptype
+        self.logger.info("handling {} from {}".format(p, src))
+        msg_type = p.ptype
         if msg_type == 'join_ack':
             self.logger.info("Joined successfully allocator {}".format(src))
         if msg_type == 'allocation':
-            allocation = data.payload
+            allocation = p.payload
             self.logger.debug("allocation={}".format(allocation))
             self.schedule(
                 action=self.send_ack,
@@ -47,15 +48,11 @@ class NetworkLoad(Agent):
                 args={'allocation': allocation})
         if msg_type == 'stop':
             self.logger.info("Received Stop from {}".format(src))
-            proc = self.schedule(self.comm.send, 
-                args={
-                    'request':Packet(ptype='stop_ack', src=self.nid),
-                    'remote':src}
-            )
-            #proc.callbacks.append(self.stop)
-            # Too much events at same time breaks realtime
-            self.logger.info("Scheduling stop")
-            self.schedule(action=self.stop, time=1)
+            self.comm.send(Packet(ptype='stop_ack', src=self.nid), src)
+            if p.payload == 'force':
+                self.stop(force=True)
+            else:
+                self.stop(force=False)
 
     def allocation_handle(self, allocation):
         """ Handle a received allocation
@@ -129,9 +126,9 @@ class NetworkLoad(Agent):
 
         self.comm.send(packet, dst)
 
-    def stop(self):
+    def stop(self, force=False):
         # Stop underlying simpy event loop
-        super(NetworkLoad, self).stop()
+        super(NetworkLoad, self).stop(force=force)
         # Inform AsyncCommThread we are stopping
         self.comm.stop()
         # Wait for asyncio thread to cleanup properly

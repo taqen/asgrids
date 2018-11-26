@@ -34,7 +34,6 @@ class Agent():
             #if not self.running.processed:
             #    self.running.interrupt()
             self.logger.debug("{}".format(e))
-            self.stop()
 
     def _run(self):
         while True:
@@ -71,7 +70,7 @@ class Agent():
             action(**args)
         return value
 
-    def stop(self):
+    def stop(self, force=False):
         """ stop the Agent.
         Behavior left for child classes
 
@@ -79,7 +78,6 @@ class Agent():
         :rtype:
 
         """
-
         self.logger.debug("interrupting pending timeouts")
         for _,v in self.timeouts.items():
             if not v.processed and not v.triggered:
@@ -87,6 +85,8 @@ class Agent():
         if len(self.timeouts) > 0:
             self.logger.info("remained {} timeouts not interrupted".format(len(self.timeouts)))
         self.running.interrupt()
+        if force:
+            raise KeyboardInterrupt
 
     def create_timer(self, timeout, eid, msg=''):
         self.logger.debug("creating timer {}".format(eid))

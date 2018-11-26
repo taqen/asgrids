@@ -46,7 +46,11 @@ class NetworkAllocator(Agent):
         elif msg_type == 'leave':
             self.remove_load(nid=p.src)
         if msg_type == 'stop':
-            self.schedule(action=self.stop_network)
+            if p.payload == 'force':
+                self.schedule(action=self.stop_network, args={'force':True})
+            else:
+                self.schedule(action=self.stop_network, args={'force':False})
+
         if msg_type == 'stop_ack':
             self.logger.debug("Received stop_ack from {}".format(p.src))
             eid = EventId(p)
@@ -122,7 +126,7 @@ class NetworkAllocator(Agent):
         self.logger.info("{} sending join ack to {}".format(self.local, dst))
         self.comm.send(packet, remote=dst)
 
-    def stop_network(self):
+    def stop_network(self, force=False):
         """ Stops the allocator.
         First, it stops all nodes in self.nodes.
         Second, wait self.stop_ack_timeout then stop parent Agent
@@ -131,7 +135,10 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        packet = Packet(ptype='stop', src=self.nid)
+        payload = None
+        if force:
+            payload = 'force'
+        packet = Packet(ptype='stop', payload=payload, src=self.nid)
         # Stopping register nodes
         for node in self.nodes:
             proc = self.schedule(
@@ -150,10 +157,10 @@ class NetworkAllocator(Agent):
 
         proc = self.schedule(self.stop, time=self.stop_ack_timeout)
 
-    def stop(self):
+    def stop(self, force=False):
         # Stop underlying simpy event loop
         self.logger.info("Stopping Simpy")
-        super(NetworkAllocator, self).stop()
+        super(NetworkAllocator, self).stop(force=force)
         # Inform AsyncCommThread we are stopping
         self.logger.info("Stopping AsyncCommThread")
         self.comm.stop()

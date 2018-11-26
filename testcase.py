@@ -37,7 +37,7 @@ class ElectricalSimulator:
     def handle_signal(self, signum, frame):
         logger.info("Captured interrupt")
         if isinstance(self.allocator, NetworkAllocator):
-            self.allocator.stop_network()
+            self.allocator.stop_network(force=True)
         elif self.running:
             logger.info("Allocator not initialized")           
         
@@ -218,4 +218,4 @@ def opf_loop():
 
 elec.executor.submit(opf_loop)
 elec.executor.submit(random_alloc, elec.loads[1])
-# elec.executor.submit(load_csv, elec.loads[2], 'PV_Nelly_House_1.csv')
+elec.executor.submit(load_csv, elec.loads[2], 'PV_Nelly_House_1.csv')
