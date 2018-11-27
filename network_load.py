@@ -63,18 +63,19 @@ class NetworkLoad(Agent):
 
         """
         self.logger.info(
-            "{} - Current node is {}".format(
+            "{} - Current allocation value is {}".format(
             self.nid,
-            self.curr_allocation['allocation_value'])
+            self.curr_allocation.value)
             )
 
         self.curr_allocation = allocation
 
         self.logger.info(
-            "{} - Updated node is {}".format(
+            "{} - Updated allocation value is {}".format(
             self.nid,
-            allocation['allocation_value'])
+            self.curr_allocation.value)
             )
+
         #yield self.env.timeout(0)
         #yield self.env.timeout(allocation.duration)
 
