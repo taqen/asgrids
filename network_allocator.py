@@ -42,23 +42,19 @@ class NetworkAllocator(Agent):
             # Interrupting timeout event for this allocation
             eid = EventId(p)
             self.logger.debug("Cancelling event {}".format(eid))
-            self.cancel_timer(eid)
+            self.remove_timer(eid)
         elif msg_type == 'leave':
-            self.remove_load(nid=p.src)
+            self.remove_node(nid=p.src)
         if msg_type == 'stop':
-            if p.payload == 'force':
-                self.schedule(action=self.stop_network, args={'force':True})
-            else:
-                self.schedule(action=self.stop_network, args={'force':False})
-
+            self.schedule(action=self.stop_network)
         if msg_type == 'stop_ack':
             self.logger.debug("Received stop_ack from {}".format(p.src))
             eid = EventId(p)
             try:
-                self.cancel_timer(eid)
+                self.remove_timer(eid)
             except Exception as e:
                 ValueError(e)
-            self.remove_load(nid=src)
+            self.remove_node(nid=src)
         if msg_type == 'curr_allocation':
             self.add_node(nid=p.src, allocation=p.payload)
 
@@ -81,7 +77,7 @@ class NetworkAllocator(Agent):
         else:
             self.nodes[nid] = allocation
 
-    def remove_load(self, nid):
+    def remove_node(self, nid):
         """ Remove a node from Allocator's known nodes list.
 
         :param nid: id (key) of node to be removed.
@@ -106,12 +102,11 @@ class NetworkAllocator(Agent):
 
         # Creating Event that is triggered if no ack is received before a timeout
         eid = EventId(allocation, nid)
-        noack_event = self.create_timer(
+        self.create_timer(
             eid=eid,
             timeout=self.alloc_ack_timeout,
             msg='no ack from {} for allocation {}'.format(
                nid, allocation.aid))
-        self.timeouts[eid] = noack_event
         self.comm.send(packet, nid)
 
     def send_join_ack(self, dst):
@@ -135,12 +130,9 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        payload = None
-        if force:
-            payload = 'force'
-        packet = Packet(ptype='stop', payload=payload, src=self.nid)
+        packet = Packet(ptype='stop', src=self.nid)
         # Stopping register nodes
-        for node in self.nodes:
+        for node in list(self.nodes):
             proc = self.schedule(
                 self.comm.send, args={
                     'request': packet,
@@ -148,22 +140,24 @@ class NetworkAllocator(Agent):
                 }, value=node)
             proc.callbacks.append(lambda e: self.logger.info("Sent stop to {}".format(e.value)))
             eid = EventId(packet, node)
-            noack_event = self.create_timer(
+            self.create_timer(
                 timeout=self.stop_ack_timeout,
                 msg="no stop_ack from {}".format(node),
                 eid=eid)
-            self.timeouts[eid] = noack_event
             self.logger.info("Stopping {}".format(node))
 
-        proc = self.schedule(self.stop, time=self.stop_ack_timeout)
+        while True:
+            if len(self.nodes) == 0:
+                self.logger.info("All nodes stopped")
+                break
+        self.schedule(self.stop)
 
-    def stop(self, force=False):
+    def stop(self):
         # Stop underlying simpy event loop
         self.logger.info("Stopping Simpy")
-        super(NetworkAllocator, self).stop(force=force)
+        super(NetworkAllocator, self).stop()
         # Inform AsyncCommThread we are stopping
         self.logger.info("Stopping AsyncCommThread")
         self.comm.stop()
         # Wait for asyncio thread to cleanup properly
         self.comm.join()
-
