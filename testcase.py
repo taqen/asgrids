@@ -37,7 +37,10 @@ class ElectricalSimulator:
     def handle_signal(self, signum, frame):
         logger.info("Captured interrupt")
         if isinstance(self.allocator, NetworkAllocator):
-            self.allocator.stop_network(force=True)
+            try:
+                self.allocator.stop_network()
+            except Exception as ex:
+                raise ex
         elif self.running:
             logger.info("Allocator not initialized")           
         
@@ -63,9 +66,9 @@ class ElectricalSimulator:
         self.net = net
         for l in list(self.net.load.index):
             self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
-            self.executor.submit(self.loads[l].run)
             self.allocation_id[l] = 0
             self.loads[l].curr_allocation = Allocation(0, self.net.load['p_kw'][l].item(), 0)
+            self.executor.submit(self.loads[l].run)
     
     def connect_network(self):
         for l in self.loads:
@@ -85,14 +88,14 @@ class ElectricalSimulator:
             return
         logger.info("Broadcasting OPF results")
         for l in self.loads:
-            if self.net.load['controllable'][l] is True:
+            if self.net.load['controllable'][l].item() == True:
+                print("Broadcasting to load {}".format(self.loads[l].local))
                 allocation_value = self.net.res_load['p_kw'][l].item()
                 allocation = Allocation(self.allocation_id[l], allocation_value, 0)
                 self.allocation_id[l] += 1
                 self.allocator.schedule(
                     action=self.allocator.send_allocation, 
-                    args={'agent_id':self.loads[l].nid, 'allocation':allocation}
-                    )
+                    args={'nid':self.loads[l].nid, 'allocation':allocation})
 
     def collect(self): 
         if not self.running:
@@ -155,8 +158,7 @@ pp.create_polynomial_cost(
 
 # create loads
 loads = [
-    pp.create_load(net, bus[1], p_kw=70e3, min_p_kw=40e3, 
-    max_p_kw=70e3, min_q_kvar=0, max_q_kvar=0, controllable=True),
+    pp.create_load(net, bus[1], p_kw=70e3, min_p_kw=40e3, max_p_kw=70e3, min_q_kvar=0, max_q_kvar=0, controllable=True),
     pp.create_load(net, bus[1], p_kw=70e3, controllable=False),
     pp.create_load(net, bus[2], p_kw=10e3, controllable=False)
 ]
@@ -175,8 +177,9 @@ def random_alloc(load):
         print("************************************************************************************************")
         v = random() * 1.0e5
         allocation = Allocation(0, v, 0)
-        load.curr_allocation = allocation
-        load.schedule(action=load.allocation_report, time=0.5)
+        event = load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=3)
+        event.callbacks.append(lambda e: load.allocation_report())
+        # load.schedule(action=load.allocation_report)
         sleep(1)
 
 ## Table read
@@ -197,8 +200,8 @@ def load_csv(load, file):
         if load.running:
             v = loads.pop(0)
             allocation = Allocation(0, v[1], 0)
-            load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
-            load.schedule(action=load.allocation_report, time=v[0])
+            event = load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
+            event.callbacks.append(lambda e: load.allocation_report(time=v[0]))
         else:
             logger.info("node {} stopped".format(load.nid))
 
