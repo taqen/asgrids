@@ -36,22 +36,21 @@ class NetworkAllocator(Agent):
         msg_type = p.ptype
         if msg_type == 'join':
             self.add_node(nid=p.src, allocation=p.payload)
-            self.schedule(action=self.send_join_ack, args={'dst': p.src})
+            self.schedule(self.send_join_ack, {'dst': p.src})
         elif msg_type == 'allocation_ack':
             self.add_node(nid=p.src, allocation=p.payload)
             # Interrupting timeout event for this allocation
             eid = EventId(p)
-            self.logger.debug("Cancelling event {}".format(eid))
-            self.remove_timer(eid)
+            self.schedule(self.remove_timeout, {'eid':eid})
         elif msg_type == 'leave':
-            self.remove_node(nid=p.src)
+            self.schedule(self.remove_node, {'nid':p.src})
         if msg_type == 'stop':
-            self.schedule(action=self.stop_network)
+            self.schedule(self.stop_network)
         if msg_type == 'stop_ack':
             self.logger.debug("Received stop_ack from {}".format(p.src))
             eid = EventId(p)
             try:
-                self.remove_timer(eid)
+                self.remove_timeout(eid)
             except Exception as e:
                 ValueError(e)
             self.remove_node(nid=src)
@@ -121,7 +120,7 @@ class NetworkAllocator(Agent):
         self.logger.info("{} sending join ack to {}".format(self.local, dst))
         self.comm.send(packet, remote=dst)
 
-    def stop_network(self, force=False):
+    def stop_network(self):
         """ Stops the allocator.
         First, it stops all nodes in self.nodes.
         Second, wait self.stop_ack_timeout then stop parent Agent
@@ -133,12 +132,8 @@ class NetworkAllocator(Agent):
         packet = Packet(ptype='stop', src=self.nid)
         # Stopping register nodes
         for node in list(self.nodes):
-            proc = self.schedule(
-                self.comm.send, args={
-                    'request': packet,
-                    'remote': node
-                }, value=node)
-            proc.callbacks.append(lambda e: self.logger.info("Sent stop to {}".format(e.value)))
+            self.comm.send(request=packet, remote=node)
+            self.logger.info("Sent stop to {}".format(node))
             eid = EventId(packet, node)
             self.create_timer(
                 timeout=self.stop_ack_timeout,
@@ -150,7 +145,7 @@ class NetworkAllocator(Agent):
             if len(self.nodes) == 0:
                 self.logger.info("All nodes stopped")
                 break
-        self.schedule(self.stop)
+        self.stop()
 
     def stop(self):
         # Stop underlying simpy event loop
