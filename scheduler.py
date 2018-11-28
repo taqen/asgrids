@@ -66,7 +66,8 @@ class SinsEnvironment(Environment):
     @property
     def now(self):
         return self._now - self.real_start
-
+    def peek(self):
+        return self._queue[0][0], self._queue[0][1], self._queue[0][2]
     def step(self):
         """Process the next event after enough real-time has passed for the
         event to happen.
