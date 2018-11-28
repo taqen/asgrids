@@ -70,22 +70,32 @@ class Agent():
                 v.interrupt()
         if len(self.timeouts) > 0:
             self.logger.warning("remained {} timeouts not interrupted".format(len(self.timeouts)))
-        stop_event = self.env.timeout(0)
+
+        stop_event = self.env.event()
+        stop_event._ok = True
+        stop_event._value = None
+        stop_event.callbacks.append(lambda e: logger.info("Triggering simpy StopSimulation"))
         stop_event.callbacks.append(simpy.core.StopSimulation.callback)
+        self.env.schedule(stop_event, simpy.core.URGENT, 0)
 
     def create_timer(self, timeout, eid, msg=''):
-        self.logger.debug("creating timer {} for {}s".format(eid, timeout))
-        event = self.env.timeout(timeout, value=eid)
-        event.callbacks.append(
-            lambda event: self.logger.info("timeout expired\n {}".format(msg)))
-        event.callbacks.append(
-            lambda event: self.remove_timer(eid))
+        self.logger.warning("creating timer {} for {}s".format(eid, timeout))
+        def event_process():
+            yield self.env.timeout(timeout, value=eid)
+            self.logger.warning("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
+            self.schedule(self.remove_timeout, args={'eid':eid})
+        event = self.env.process(event_process())
         self.timeouts[eid] = event
 
-    def remove_timer(self, eid):
-        self.logger.debug("canceling timer {}".format(eid))
+    def remove_timeout(self, eid):
+        self.logger.warning("canceling timer {}".format(eid))
         e = self.timeouts.pop(eid, None)
         if e is None:
             self.logger.warning("no eid %s"%eid)
+            return
         # if e is not None and not (e.processed or e.triggered):
-        self.schedule(e.interrupt)
+        try:
+            e.interrupt()
+            self.logger.warning("canceled timer {} at {}".format(eid, self.env.now))
+        except Exception as e:
+            self.logger.warning("ERROR INTERRUPTING TIMEOUT {} \n {}".format(eid,e))
