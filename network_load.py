@@ -49,10 +49,8 @@ class NetworkLoad(Agent):
         if msg_type == 'stop':
             self.logger.info("Received Stop from {}".format(src))
             self.comm.send(Packet(ptype='stop_ack', src=self.nid), src)
-            if p.payload == 'force':
-                self.stop(force=True)
-            else:
-                self.stop(force=False)
+            self.schedule(self.stop)
+
 
     def allocation_handle(self, allocation):
         """ Handle a received allocation
@@ -127,9 +125,9 @@ class NetworkLoad(Agent):
 
         self.comm.send(packet, dst)
 
-    def stop(self, force=False):
+    def stop(self):
         # Stop underlying simpy event loop
-        super(NetworkLoad, self).stop(force=force)
+        super(NetworkLoad, self).stop()
         # Inform AsyncCommThread we are stopping
         self.comm.stop()
         # Wait for asyncio thread to cleanup properly
