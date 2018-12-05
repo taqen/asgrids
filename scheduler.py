@@ -29,7 +29,7 @@ class SinsEnvironment(Environment):
 
     """
     def __init__(self, initial_time=0, factor=1.0, strict=True):
-        self.env_start = time() + initial_time
+        self.env_start = initial_time
         self.real_start = time()
         self._factor = factor
         self._strict = strict
@@ -48,6 +48,11 @@ class SinsEnvironment(Environment):
         events takes too long."""
         return self._strict
 
+
+    def run(self, until=None):
+        self.sync()
+        Environment.run(self, until)
+
     def sync(self):
         """Synchronize the internal time with the current wall-clock time.
 
@@ -58,13 +63,11 @@ class SinsEnvironment(Environment):
         """
         self.real_start = time()
 
-    @property
-    def now(self):
-        return self._now - self.env_start
-
     def schedule(self, event, priority=NORMAL, delay=0):
         """Schedule an *event* with a given *priority* and a *delay*."""
-        Environment.schedule(self, event, priority, delay)
+        real_now = time() - self.real_start
+        Environment.schedule(
+            self, event, priority, real_now + delay - self.now)
         # interrupt ongoing sleep,
         # as we may no longer be sleeping for the queue head
         self.qevent.set()
@@ -83,7 +86,7 @@ class SinsEnvironment(Environment):
         if evt_time is Infinity:
             raise EmptySchedule()
 
-        real_time = evt_time
+        real_time = self.real_start + (evt_time - self.env_start) * self.factor
 
         if self.strict and time() - real_time > self.factor:
             # Events scheduled for time *t* may take just up to *t+1*
