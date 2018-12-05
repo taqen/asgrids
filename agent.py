@@ -3,7 +3,6 @@ from sys import int_info
 import hashlib
 import simpy
 from scheduler import SinsEnvironment
-from simpy.rt import RealtimeEnvironment
 from async_communication import AsyncCommunication
 from defs import Packet, Allocation, EventId
 import logging
@@ -23,7 +22,7 @@ class Agent():
         """
         self.logger = logging.getLogger('Agent')
 
-        self.env = RealtimeEnvironment(strict=False) if env is None else env
+        self.env = SinsEnvironment(strict=True) if env is None else env
         self.timeouts = {}
 
     def run(self):
