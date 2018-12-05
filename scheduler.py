@@ -6,13 +6,13 @@ with the real-time (aka *wall-clock time*).
 """
 try:
     # Python >= 3.3
-    from time import monotonic as time, sleep
+    from time import monotonic as time
 except ImportError:
     # Python < 3.3
-    from time import time, sleep
+    from time import time
+from threading import Event
 
 from simpy.core import Environment, EmptySchedule, Infinity, NORMAL
-from heapq import heappush
 
 
 class SinsEnvironment(Environment):
@@ -28,13 +28,13 @@ class SinsEnvironment(Environment):
     *strict* to ``False``.
 
     """
-    def __init__(self, initial_time=time(), factor=1.0, strict=True):
-        Environment.__init__(self, initial_time)
-
-        self.env_start = initial_time
+    def __init__(self, initial_time=0, factor=1.0, strict=True):
+        self.env_start = time() + initial_time
         self.real_start = time()
         self._factor = factor
         self._strict = strict
+        self.qevent = Event()
+        Environment.__init__(self, self.env_start)
 
     @property
     def factor(self):
@@ -58,16 +58,17 @@ class SinsEnvironment(Environment):
         """
         self.real_start = time()
 
-    def schedule(self, event, priority=NORMAL, delay=0):
-        """Schedule an *event* with a given *priority* and a *delay*."""
-        heappush(self._queue,
-                 (time() + delay, priority, next(self._eid), event))
-
     @property
     def now(self):
-        return self._now - self.real_start
-    def peek(self):
-        return self._queue[0][0], self._queue[0][1], self._queue[0][2]
+        return self._now - self.env_start
+
+    def schedule(self, event, priority=NORMAL, delay=0):
+        """Schedule an *event* with a given *priority* and a *delay*."""
+        Environment.schedule(self, event, priority, delay)
+        # interrupt ongoing sleep,
+        # as we may no longer be sleeping for the queue head
+        self.qevent.set()
+
     def step(self):
         """Process the next event after enough real-time has passed for the
         event to happen.
@@ -77,7 +78,7 @@ class SinsEnvironment(Environment):
         the event is processed too slowly.
 
         """
-        evt_time, _, evt_id = self.peek()
+        evt_time = self.peek()
 
         if evt_time is Infinity:
             raise EmptySchedule()
@@ -89,21 +90,18 @@ class SinsEnvironment(Environment):
             # for their computation, before an error is raised.
             raise RuntimeError('Simulation too slow for real time (%.3fs).' % (
                 time() - real_time))
-        
+
         # Sleep in a loop to fix inaccuracies of windows (see
         # http://stackoverflow.com/a/15967564 for details) and to ignore
         # interrupts.
+        self.qevent.clear()
         while True:
-            if evt_id != self.peek()[2]:
-                # events queue updated while we were sleeping
-                # we are no longer on top, return and re-step
-                return
             delta = real_time - time()
             if delta <= 0:
                 break
-            # Sleep for 1us
-            # python time is based on gettimeofday() with resolution in microseconds see
-            # https://svn.python.org/projects/python/branches/pep-0384/Python/pytime.c
-            sleep(1e-6)
+            # Sleep for delta, unless interrupted then re-step
+            interrupted = self.qevent.wait(delta)
+            if interrupted:
+                return
 
         return Environment.step(self)
