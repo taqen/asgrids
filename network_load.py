@@ -127,8 +127,10 @@ class NetworkLoad(Agent):
 
     def stop(self):
         # Stop underlying simpy event loop
+        self.logger.info("Stopping Simpy")
         super(NetworkLoad, self).stop()
         # Inform AsyncCommThread we are stopping
+        self.logger.info("Stopping AsyncCommThread")
         self.comm.stop()
         # Wait for asyncio thread to cleanup properly
         self.comm.join()
