@@ -1,8 +1,9 @@
 from abc import abstractmethod
-from sys import float_info
+from sys import int_info
 import hashlib
 import simpy
 from scheduler import SinsEnvironment
+from simpy.rt import RealtimeEnvironment
 from async_communication import AsyncCommunication
 from defs import Packet, Allocation, EventId
 import logging
@@ -22,13 +23,16 @@ class Agent():
         """
         self.logger = logging.getLogger('Agent')
 
-        self.env = SinsEnvironment(strict=True) if env is None else env
+        self.env = RealtimeEnvironment(strict=False) if env is None else env
         self.timeouts = {}
 
     def run(self):
         self.logger.info("started agent's infinite loop")
+        # sleep for max value of int64_t = 9223372036.854775
+        # see:
+        # https://github.com/python/cpython/blob/f2f4555d8287ad217a1dba7bbd93103ad4daf3a8/Include/pytime.h#L19
         try:
-            self.env.run(until=float_info.max)
+            self.env.run(until=9223372036.854775)
         except (KeyboardInterrupt, simpy.Interrupt) as e:
             self.logger.debug("{}".format(e))
 
