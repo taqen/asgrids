@@ -1,13 +1,12 @@
 from abc import abstractmethod
 from sys import int_info
 import hashlib
-import simpy
-from scheduler import SinsEnvironment
+from simpy.core import Environment, NORMAL, Infinity
+from heapq import heappush
 from async_communication import AsyncCommunication
 from defs import Packet, Allocation, EventId
 import logging
 from time import time
-from simpy.core import Infinity
 import queue
 
 logger = logging.getLogger('Agent')
@@ -17,6 +16,17 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+
+class AgentEnvironment(Environment):
+    def schedule(self, event, priority=NORMAL, delay=0):
+        """
+        Schedule an *event* with a given *priority* and a *delay*.
+        Scheduling relatively to real now
+        """
+        heappush(self._queue,
+                 (time() + delay, priority, next(self._eid), event))
+
 # A generic Network Agent.
 class Agent():
     def __init__(self, env=None):
@@ -25,18 +35,13 @@ class Agent():
         :param env: a simpy simulation environment
         """
         self.logger = logging.getLogger('Agent')
-
-        self.env = None # = SinsEnvironment(strict=True, factor=0.1) if env is None else env
+        self.env = None
         self.tasks = queue.Queue()
         self.timeouts = {}
 
     def run(self):
-        self.env = simpy.Environment(time())
+        self.env = AgentEnvironment(time())
         self.logger.info("started agent's infinite loop")
-        # sleep for max value of int64_t = 9223372036.854775
-        # see:
-        # https://github.com/python/cpython/blob/f2f4555d8287ad217a1dba7bbd93103ad4daf3a8/Include/pytime.h#L19
-        # self.env.run(until=9223372036.854775)
         while True:
             delay = self.env.peek() - time()
             if delay <= 0:
@@ -51,7 +56,12 @@ class Agent():
             func()
 
     def schedule(self, action, args=None, time=0, value=None):
-        """ The agent's schedule function
+        """
+        The agent's schedule function.
+        First it creates a simpy events, that will then execute the action
+        when triggered.
+        The event is scheduled in the tasks queue, to be dequeued in the agent's
+        loop.
 
         :param time: relative time from present to execute action
         :param action: the handle to the function to be executed at time.
@@ -76,13 +86,8 @@ class Agent():
         return event
 
     def stop(self):
-        """ stop the Agent.
-        Behavior left for child classes
+        """ stop the Agent by interrupted the loop"""
 
-        :returns:
-        :rtype:
-
-        """
         self.logger.debug("interrupting pending timeouts")
         for _,v in self.timeouts.items():
             if not v.processed and not v.triggered:
@@ -90,15 +95,14 @@ class Agent():
         if len(self.timeouts) > 0:
             self.logger.warning("remained {} timeouts not interrupted".format(len(self.timeouts)))
 
+        # Schedule None to trigger Agent's loop termination
         self.tasks.put(None)
-        # stop_event = self.env.event()
-        # stop_event._ok = True
-        # stop_event._value = None
-        # stop_event.callbacks.append(lambda e: logger.info("Triggering simpy StopSimulation"))
-        # stop_event.callbacks.append(simpy.core.StopSimulation.callback)
-        # self.env.schedule(stop_event, simpy.core.URGENT, 0)
 
     def create_timer(self, timeout, eid, msg=''):
+        """
+        Creating a timer using simpy's timeout.
+        A timer will clear itself from Agents timeouts list after expiration.
+        """
         self.logger.warning("creating timer {} for {}s".format(eid, timeout))
         def event_process():
             yield self.env.timeout(timeout, value=eid)
@@ -108,6 +112,9 @@ class Agent():
         self.timeouts[eid] = event
 
     def remove_timeout(self, eid):
+        """
+        Remove a timeout from Agent's timeouts
+        """
         self.logger.warning("canceling timer {}".format(eid))
         e = self.timeouts.pop(eid, None)
         if e is None:
@@ -118,4 +125,4 @@ class Agent():
             e.interrupt()
             self.logger.warning("canceled timer {} at {}".format(eid, self.env.now))
         except Exception as e:
-            self.logger.warning("ERROR INTERRUPTING TIMEOUT {} \n {}".format(eid,e))
+            self.logger.warning("Couldn't interrupt timeout {} \n {}".format(eid,e))
