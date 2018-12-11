@@ -1,6 +1,6 @@
-from defs import Packet, Allocation, EventId
-from agent import Agent
-from async_communication import AsyncCommunication
+from .defs import Packet, Allocation, EventId
+from .agent import Agent
+from .async_communication import AsyncCommunication
 import logging
 
 logger = logging.getLogger('Agent.NetworkAllocator')

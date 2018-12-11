@@ -3,8 +3,8 @@ from sys import int_info
 import hashlib
 from simpy.core import Environment, NORMAL, Infinity
 from heapq import heappush
-from async_communication import AsyncCommunication
-from defs import Packet, Allocation, EventId
+from .async_communication import AsyncCommunication
+from .defs import Packet, Allocation, EventId
 import logging
 import time
 import queue

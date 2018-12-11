@@ -8,7 +8,7 @@ import zmq
 import zmq.asyncio
 from concurrent.futures import ThreadPoolExecutor
 import msgpack
-from defs import ext_pack, ext_unpack
+from .defs import ext_pack, ext_unpack
 
 # Get the local logger
 logger = logging.getLogger('AsyncCommThread')
