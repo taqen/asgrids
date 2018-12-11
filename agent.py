@@ -6,8 +6,9 @@ from heapq import heappush
 from async_communication import AsyncCommunication
 from defs import Packet, Allocation, EventId
 import logging
-from time import time
+import time
 import queue
+from threading import Thread
 
 logger = logging.getLogger('Agent')
 logger.setLevel(logging.INFO)
@@ -25,7 +26,7 @@ class AgentEnvironment(Environment):
         Scheduling relatively to real now
         """
         heappush(self._queue,
-                 (time() + delay, priority, next(self._eid), event))
+                 (time.time() + delay, priority, next(self._eid), event))
 
 # A generic Network Agent.
 class Agent():
@@ -40,10 +41,14 @@ class Agent():
         self.timeouts = {}
 
     def run(self):
-        self.env = AgentEnvironment(time())
+        t = Thread(target=self._run)
+        t.start()
+
+    def _run(self):
+        self.env = AgentEnvironment(time.time())
         self.logger.info("started agent's infinite loop")
         while True:
-            delay = self.env.peek() - time()
+            delay = self.env.peek() - time.time()
             if delay <= 0:
                 self.env.step()
                 continue
@@ -53,9 +58,12 @@ class Agent():
                 continue
             if not func:
                 return
-            func()
+            try:
+                func(self.env)
+            except Exception as e:
+                raise RuntimeError(e)
 
-    def schedule(self, action, args=None, time=0, value=None):
+    def schedule(self, action, args=None, delay=0, value=None):
         """
         The agent's schedule function.
         First it creates a simpy events, that will then execute the action
@@ -69,7 +77,7 @@ class Agent():
         :rtype:
 
         """
-        self.logger.debug("scheduling action {}".format(action))
+        self.logger.info("scheduling action {} at {}".format(action, time.time()))
         event = self.env.event()
         event._ok = True
         event._value = value
@@ -82,8 +90,8 @@ class Agent():
         else:
             event.callbacks.append(
                 lambda e: action(**args))
-        self.tasks.put(lambda: self.env.schedule(event=event, delay=time))
-        return event
+        self.tasks.put(lambda env: env.schedule(event=event, delay=delay))
+        # return event
 
     def stop(self):
         """ stop the Agent by interrupted the loop"""
