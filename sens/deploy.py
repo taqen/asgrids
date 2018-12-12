@@ -3,11 +3,7 @@ import rpyc
 from rpyc.utils.helpers import BgServingThread
 from plumbum import SshMachine, local
 from plumbum.path.utils import copy
-import agent
-import network_load
-import network_allocator
-import defs
-import async_communication
+import sens
 
 class SmartGridSimulation:
     def __init__(self):
@@ -16,35 +12,25 @@ class SmartGridSimulation:
         self.remote_machines = []
         self.remote_servers = []
         self.server_threads = []
-    def _init_remote(self, remote_server, ntype='load'):
+
+    def check_remote(self, remote_server, ntype='load'):
         conn = remote_server.classic_connect()
-        rpyc.classic.upload_module(
-            conn,
-            agent,
-            "/home/ubuntu/.local/lib/python3.6/site-packages/")
-        rpyc.classic.upload_module(
-            conn,
-            network_load,
-            "/home/ubuntu/.local/lib/python3.6/site-packages/")
-        rpyc.classic.upload_module(
-            conn,
-            network_allocator,
-            "/home/ubuntu/.local/lib/python3.6/site-packages/")
-        rpyc.classic.upload_module(
-            conn,
-            async_communication,
-            "/home/ubuntu/.local/lib/python3.6/site-packages/")
-        rpyc.classic.upload_module(
-            conn,
-            defs,
-            "/home/ubuntu/.local/lib/python3.6/site-packages/")
+        if "sens" not in conn.modules:
+            rpyc.classic.upload_package(
+                conn,
+                sens,
+                "/home/ubuntu/.local/lib/python3.6/site-packages/")
+            return False
+        else:
+            return True
 
     def create_node(self, hostname, username, keyfile, ntype='load', config={}):
         remote_machine = SshMachine(host=hostname, user=username, keyfile=keyfile)
         remote_server = DeployedServer(remote_machine)
-        self._init_remote(remote_server)
-        remote_server.close()
-        remote_server = DeployedServer(remote_machine)
+        if not self.check_remote(remote_server):
+            remote_server.close()
+            remote_server = DeployedServer(remote_machine)
+
         self.remote_machines.append(remote_machine)
         self.remote_servers.append(remote_server)
         remote_tmp = remote_server.proc.argv[8]
