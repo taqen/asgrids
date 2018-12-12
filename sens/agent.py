@@ -2,6 +2,7 @@ from abc import abstractmethod
 from sys import int_info
 import hashlib
 from simpy.core import Environment, NORMAL, Infinity
+import simpy
 from heapq import heappush
 from .async_communication import AsyncCommunication
 from .defs import Packet, Allocation, EventId
@@ -35,18 +36,22 @@ class Agent():
 
         :param env: a simpy simulation environment
         """
-        self.logger = logging.getLogger('Agent')
         self.env = None
         self.tasks = queue.Queue()
         self.timeouts = {}
-
+        self.local = None
+        self.comm = AsyncCommunication()
+        self._comm_thread = Thread(target=self.comm.run)
+        self._sim_thread = Thread(target=self._run)
+        self.__logger = None
     def run(self):
-        t = Thread(target=self._run)
-        t.start()
+        self.__logger = logging.getLogger('Agent.{}'.format(self.local))
+        self._comm_thread.start()
+        self._sim_thread.start()
 
     def _run(self):
         self.env = AgentEnvironment(time.time())
-        self.logger.info("started agent's infinite loop")
+        self.__logger.info("started agent's infinite loop")
         while True:
             delay = self.env.peek() - time.time()
             if delay <= 0:
@@ -77,44 +82,53 @@ class Agent():
         :rtype:
 
         """
-        self.logger.info("scheduling action {} at {}".format(action, time.time()))
+        self.__logger.debug("scheduling action {} at {}".format(action, time.time()))
         event = self.env.event()
         event._ok = True
         event._value = value
-        # event = self.env.timeout(delay=time, value=value)
         event.callbacks.append(
-            lambda e: self.logger.debug("executing action{}".format(action)))
+            lambda e: self.__logger.debug("executing action{}".format(action)))
         if args is None:
             event.callbacks.append(
                 lambda e: action())
-        else:
+        elif isinstance(args, dict):
             event.callbacks.append(
                 lambda e: action(**args))
+        elif isinstance(args, list):
+            event.callbacks.append(
+                lambda e: action(**args))
+
         self.tasks.put(lambda env: env.schedule(event=event, delay=delay))
         # return event
 
     def stop(self):
         """ stop the Agent by interrupted the loop"""
 
-        self.logger.debug("interrupting pending timeouts")
+        self.__logger.debug("interrupting pending timeouts")
         for _,v in self.timeouts.items():
             if not v.processed and not v.triggered:
                 v.interrupt()
         if len(self.timeouts) > 0:
-            self.logger.warning("remained {} timeouts not interrupted".format(len(self.timeouts)))
+            self.__logger.warning("remained {} timeouts not interrupted".format(len(self.timeouts)))
 
         # Schedule None to trigger Agent's loop termination
         self.tasks.put(None)
+        self.comm.stop()
+        self._comm_thread.join()
 
     def create_timer(self, timeout, eid, msg=''):
         """
         Creating a timer using simpy's timeout.
         A timer will clear itself from Agents timeouts list after expiration.
         """
-        self.logger.warning("creating timer {} for {}s".format(eid, timeout))
+        self.__logger.debug("creating timer {} for {}s".format(eid, timeout))
         def event_process():
-            yield self.env.timeout(timeout, value=eid)
-            self.logger.warning("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
+            try:
+                yield self.env.timeout(timeout, value=eid)
+            except simpy.exceptions.Interrupt:
+                self.__logger.debug("event_process interrupted for eid {}".format(eid))
+                return
+            self.__logger.debug("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
             self.schedule(self.remove_timeout, args={'eid':eid})
         event = self.env.process(event_process())
         self.timeouts[eid] = event
@@ -123,14 +137,14 @@ class Agent():
         """
         Remove a timeout from Agent's timeouts
         """
-        self.logger.warning("canceling timer {}".format(eid))
+        self.__logger.debug("canceling timer {}".format(eid))
         e = self.timeouts.pop(eid, None)
         if e is None:
-            self.logger.warning("no eid %s"%eid)
+            self.__logger.warning("remote_timeout, no eid %s"%eid)
             return
         # if e is not None and not (e.processed or e.triggered):
         try:
             e.interrupt()
-            self.logger.warning("canceled timer {} at {}".format(eid, self.env.now))
+            self.__logger.debug("canceled timer {} at {}".format(eid, self.env.now))
         except Exception as e:
-            self.logger.warning("Couldn't interrupt timeout {} \n {}".format(eid,e))
+            self.__logger.warning("remote_timeout, couldn't interrupt timeout {} \n {}".format(eid,e))

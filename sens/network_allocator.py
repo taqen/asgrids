@@ -3,23 +3,23 @@ from .agent import Agent
 from .async_communication import AsyncCommunication
 import logging
 
-logger = logging.getLogger('Agent.NetworkAllocator')
+# logger = logging.getLogger('Agent.NetworkAllocator')
 
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
     def __init__(self, local='127.0.0.1:5555', env=None):
+        super(NetworkAllocator, self).__init__(env=env)
         self.local = local
         self.nid = local
-        self.comm = AsyncCommunication(callback=self.receive_handle, local_address=local)
-        self.comm.start()
         self.nodes = {}
         self.alloc_ack_timeout = 2
         self.stop_ack_timeout = 5
-        super(NetworkAllocator, self).__init__(env=env)
-
-        loggername = 'Agent.NetworkAllocator.{}'.format(local.split(':')[1])
-        self.logger = logging.getLogger(loggername)
-        self.logger.info("Initializing NetworkAllocator")
+        self.comm._local_address = self.local
+        self.comm._callback = self.receive_handle
+        self.comm._identity = self.nid
+        loggername = 'Agent.NetworkAllocator.{}'.format(self.local)
+        self.__logger = logging.getLogger(loggername)
+        self.__logger.info("Initializing NetworkAllocator")
 
     def receive_handle(self, p: Packet, src):
         """ Handle packets received and decoded at the AsyncCommunication layer.
@@ -32,7 +32,7 @@ class NetworkAllocator(Agent):
         """
         assert isinstance(p, Packet), p
 
-        self.logger.info("handling {} from {}".format(p, src))
+        self.__logger.info("handling {} from {}".format(p, src))
         msg_type = p.ptype
         if msg_type == 'join':
             self.add_node(nid=p.src, allocation=p.payload)
@@ -47,7 +47,7 @@ class NetworkAllocator(Agent):
         if msg_type == 'stop':
             self.schedule(self.stop_network)
         if msg_type == 'stop_ack':
-            self.logger.debug("Received stop_ack from {}".format(p.src))
+            self.__logger.debug("Received stop_ack from {}".format(p.src))
             eid = EventId(p)
             try:
                 self.remove_timeout(eid)
@@ -66,13 +66,13 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        self.logger.info("adding node {}".format(nid))
+        self.__logger.info("adding node {}".format(nid))
         if nid in self.nodes:
             msg = "node {} already added".format(nid)
             if self.nodes[nid] == 0 or allocation.value != self.nodes[nid].value:
                 msg = "{} - updated allocation from {} to {}".format(msg, self.nodes[nid], allocation)
                 self.nodes[nid] = allocation
-            self.logger.info(msg)
+            self.__logger.info(msg)
         else:
             self.nodes[nid] = allocation
 
@@ -84,7 +84,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        self.logger.info("Removing node {}".format(nid))
+        self.__logger.info("Removing node {}".format(nid))
         return self.nodes.pop(nid, None)
 
     def send_allocation(self, nid, allocation):
@@ -96,7 +96,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        self.logger.info("sending allocation to {}".format(nid))
+        self.__logger.info("sending allocation to {}".format(nid))
         packet = Packet('allocation', allocation)
 
         # Creating Event that is triggered if no ack is received before a timeout
@@ -117,7 +117,7 @@ class NetworkAllocator(Agent):
 
         """
         packet = Packet('join_ack')
-        self.logger.info("{} sending join ack to {}".format(self.local, dst))
+        self.__logger.info("{} sending join ack to {}".format(self.local, dst))
         self.comm.send(packet, remote=dst)
 
     def stop_network(self):
@@ -133,26 +133,21 @@ class NetworkAllocator(Agent):
         # Stopping register nodes
         for node in list(self.nodes):
             self.comm.send(request=packet, remote=node)
-            self.logger.info("Sent stop to {}".format(node))
+            self.__logger.info("Sent stop to {}".format(node))
             eid = EventId(packet, node)
             self.create_timer(
                 timeout=self.stop_ack_timeout,
                 msg="no stop_ack from {}".format(node),
                 eid=eid)
-            self.logger.info("Stopping {}".format(node))
+            self.__logger.info("Stopping {}".format(node))
 
         while True:
             if len(self.nodes) == 0:
-                self.logger.info("All nodes stopped")
+                self.__logger.info("All nodes stopped")
                 break
         self.stop()
 
     def stop(self):
         # Stop underlying simpy event loop
-        self.logger.info("Stopping Simpy")
+        self.__logger.info("Stopping Simpy")
         super(NetworkAllocator, self).stop()
-        # Inform AsyncCommThread we are stopping
-        self.logger.info("Stopping AsyncCommThread")
-        self.comm.stop()
-        # Wait for asyncio thread to cleanup properly
-        self.comm.join()

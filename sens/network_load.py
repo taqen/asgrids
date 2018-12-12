@@ -3,23 +3,21 @@ from .agent import Agent
 from .async_communication import AsyncCommunication
 import logging
 import simpy
-logger = logging.getLogger('Agent.NetworkLoad')
 
 class NetworkLoad(Agent):
     def __init__(self, remote='127.0.0.1:5555', local='127.0.0.1:5000', env=None):
+        super(NetworkLoad, self).__init__(env=env)
         self.remote = remote
         self.local = local
         self.nid = self.local
         self.curr_allocation = Allocation()
-        self.comm = AsyncCommunication(callback=self.receive_handle,
-                                       local_address=local,
-                                       identity=self.nid)
-        self.comm.start()
-        super(NetworkLoad, self).__init__(env=env)
-
-        loggername = 'Agent.NetworkLoad.{}'.format(local.split(':')[1])
-        self.logger = logging.getLogger(loggername)
-        self.logger.info("initializing")
+        self.comm._local_address = self.local
+        self.comm._identity = self.nid
+        self.comm._callback = self.receive_handle
+        
+        loggername = 'Agent.NetworkLoad.{}'.format(self.local)
+        self.__logger = logging.getLogger(loggername)
+        self.__logger.info("initializing")
 
     def receive_handle(self, p, src):
         """ Handled payload received from AsyncCommunication
@@ -30,13 +28,13 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.logger.info("handling {} from {}".format(p, src))
+        self.__logger.info("handling {} from {}".format(p, src))
         msg_type = p.ptype
         if msg_type == 'join_ack':
-            self.logger.info("Joined successfully allocator {}".format(src))
+            self.__logger.info("Joined successfully allocator {}".format(src))
         if msg_type == 'allocation':
             allocation = p.payload
-            self.logger.debug("allocation={}".format(allocation))
+            self.__logger.debug("allocation={}".format(allocation))
             self.schedule(
                 action=self.send_ack,
                 args={
@@ -47,7 +45,7 @@ class NetworkLoad(Agent):
                 action=self.allocation_handle,
                 args={'allocation': allocation})
         if msg_type == 'stop':
-            self.logger.info("Received Stop from {}".format(src))
+            self.__logger.info("Received Stop from {}".format(src))
             self.comm.send(Packet(ptype='stop_ack', src=self.nid), src)
             self.schedule(self.stop)
 
@@ -60,7 +58,7 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.logger.info(
+        self.__logger.info(
             "{} - Current allocation value is {}".format(
             self.nid,
             self.curr_allocation.value)
@@ -68,7 +66,7 @@ class NetworkLoad(Agent):
 
         self.curr_allocation = allocation
 
-        self.logger.info(
+        self.__logger.info(
             "{} - Updated allocation value is {}".format(
             self.nid,
             self.curr_allocation.value)
@@ -80,7 +78,7 @@ class NetworkLoad(Agent):
     def allocation_report(self):
         packet = Packet('curr_allocation', self.curr_allocation, self.nid)
 
-        self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
+        self.__logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
 
         self.comm.send(packet, self.remote)
 
@@ -101,7 +99,7 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.logger.info('Joining {}'.format(dst))
+        self.__logger.info('Joining {}'.format(dst))
         packet = Packet('join', self.curr_allocation, self.nid)
         self.comm.send(packet, dst)
 
@@ -119,7 +117,7 @@ class NetworkLoad(Agent):
         self.comm.send(packet, dst)
 
     def send_leave(self, dst):
-        self.logger.info("Leaving {}".format(dst))
+        self.__logger.info("Leaving {}".format(dst))
     
         packet = Packet(ptype='leave', src=self.nid)
 
@@ -127,10 +125,5 @@ class NetworkLoad(Agent):
 
     def stop(self):
         # Stop underlying simpy event loop
-        self.logger.info("Stopping Simpy")
+        self.__logger.info("Stopping Simpy")
         super(NetworkLoad, self).stop()
-        # Inform AsyncCommThread we are stopping
-        self.logger.info("Stopping AsyncCommThread")
-        self.comm.stop()
-        # Wait for asyncio thread to cleanup properly
-        self.comm.join()
