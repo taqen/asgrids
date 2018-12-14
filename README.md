@@ -133,6 +133,12 @@ It inherits from the Generic Agents and interfaces with the outside world throug
 
 <a id="sgsim"></a>
 ## Smart Grid Simulation
+```bash
+python3 setup.py build
+python3 setup.py install
+cd examples
+python smart_grid_example.py
+```
 SENS implements a SmartGridSimulation class in ```deploy.py```. This class is responsible of creating remote and local nodes to build our co-simulation communication network topology.
 
 Agents will be deployed remotely if needed and interfaced locally to provide a unified environemnt where we can dynamically interact with our ongoing co-simulation in realtime.
