@@ -44,7 +44,7 @@ def allocation_updated(allocation, node_addr):
     ## We receive node_addr as "X.X.X.X:YYYY"
     ## ind also identifies the node in pandapawer loads list
     ind = net_addr.index(node_addr.split(":")[0])
-    allocations_queue.put(["Load_{}".format(ind), allocation.p_kw, allocation.q_kw])
+    allocations_queue.put(["Load_{}".format(ind), allocation.p_value, allocation.q_value])
 
 def create_nodes(sim):
     ## Create remote agents of type NetworkLoad
