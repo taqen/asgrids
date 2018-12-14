@@ -4,10 +4,15 @@ from rpyc.utils.helpers import BgServingThread
 from rpyc.utils.classic import teleport_function, deliver
 from plumbum import SshMachine, local
 from plumbum.path.utils import copy
+import typing
 import sens
 from sens import NetworkAllocator, NetworkLoad
-import typing
 
+
+"""
+This defines a smart grid simulation environment
+It handles deployement/execution of local and remote nodes
+"""
 class SmartGridSimulation:
     def __init__(self):
         self.nodes = []
@@ -25,12 +30,12 @@ class SmartGridSimulation:
         # NOTE Expect remote node object name to be always "node"
         # callable arguments should be rpyc's netrefs to use remote objects,
         # and avoid re-uploading.
-        self.set_node_function = teleport_function
+        self.teleport = teleport_function
 
     """
     Make sure 'sens' library is available remotely
     """
-    def check_remote(self, remote_server, ntype='load', python_pkg_path="~/.local/lib/python3.6/site-packages"):
+    def check_remote(self, remote_server, ntype='load', python_pkg_path="/home/ubuntu/.local/lib/python3.7/site-packages/"):
         conn = remote_server.classic_connect()
         if "sens" not in conn.modules:
             rpyc.classic.upload_package(
@@ -80,6 +85,10 @@ class SmartGridSimulation:
         self.nodes.append(node)
         return node
 
+
+    """
+    Creates a local node
+    """
     def create_node(self, ntype='load'):
         if ntype is 'load':
             node = NetworkLoad()
@@ -107,8 +116,6 @@ class SmartGridSimulation:
             node.stop()
         for server in self.remote_servers:
             server.close()
-        for thread in self.server_threads:
-            thread.close()
         self.node = []
         self.remote_machines = []
         self.remote_servers = []
