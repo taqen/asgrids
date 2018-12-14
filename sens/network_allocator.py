@@ -3,25 +3,23 @@ from .agent import Agent
 from .async_communication import AsyncCommunication
 import logging
 
-# logger = logging.getLogger('Agent.NetworkAllocator')
-
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
-    def __init__(self, local='127.0.0.1:5555', env=None):
+    def __init__(self, local=None, env=None):
         super(NetworkAllocator, self).__init__(env=env)
-        self.local = local
         self.nid = local
         self.nodes = {}
         self.alloc_ack_timeout = 2
         self.stop_ack_timeout = 5
-        self.comm._local_address = self.local
-        self.comm._callback = self.receive_handle
-        self.comm._identity = self.nid
+        self.local = local
+        self.callback = self.receive_handle
+        self.identity = self.nid
+
         loggername = 'Agent.NetworkAllocator.{}'.format(self.local)
         self.__logger = logging.getLogger(loggername)
         self.__logger.info("Initializing NetworkAllocator")
 
-    def receive_handle(self, p: Packet, src):
+    def receive_handle(self, p: Packet, src=None):
         """ Handle packets received and decoded at the AsyncCommunication layer.
 
         :param data: received payload
@@ -31,6 +29,9 @@ class NetworkAllocator(Agent):
 
         """
         assert isinstance(p, Packet), p
+        src = src
+        if src is None:
+            src = p.src
 
         self.__logger.info("handling {} from {}".format(p, src))
         msg_type = p.ptype
@@ -69,7 +70,7 @@ class NetworkAllocator(Agent):
         self.__logger.info("adding node {}".format(nid))
         if nid in self.nodes:
             msg = "node {} already added".format(nid)
-            if self.nodes[nid] == 0 or allocation.value != self.nodes[nid].value:
+            if allocation != self.nodes[nid]:
                 msg = "{} - updated allocation from {} to {}".format(msg, self.nodes[nid], allocation)
                 self.nodes[nid] = allocation
             self.__logger.info(msg)
@@ -129,7 +130,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        packet = Packet(ptype='stop', src=self.nid)
+        packet = Packet(ptype='stop', src=self.local)
         # Stopping register nodes
         for node in list(self.nodes):
             self.comm.send(request=packet, remote=node)
