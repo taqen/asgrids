@@ -37,16 +37,47 @@ class Agent():
         :param env: a simpy simulation environment
         """
         self.env = None
+        self.nid = None
         self.tasks = queue.Queue()
         self.timeouts = {}
-        self.local = None
+        self._local = None
         self.comm = AsyncCommunication()
-        self._comm_thread = Thread(target=self.comm.run)
         self._sim_thread = Thread(target=self._run)
         self.__logger = None
+
+    @property
+    def local(self):
+        return self._local
+
+    @local.setter
+    def local(self, value):
+        self._local = value
+        self.comm._local_address = value
+        if self.comm.running:
+            self.comm.stop()
+            self.comm._local_address = value
+            self.comm.start()
+        else:
+            self.comm._local_address = value
+    @property
+    def callback(self):
+        return self.comm._callback
+
+    @property
+    def identity(self):
+        return self.comm._identity
+
+    @identity.setter
+    def identity(self, value):
+        self.comm._identity = value
+
+    @callback.setter
+    def callback(self, value):
+        self.comm._callback = value
+
     def run(self):
         self.__logger = logging.getLogger('Agent.{}'.format(self.local))
-        self._comm_thread.start()
+        self.comm.start()
         self._sim_thread.start()
 
     def _run(self):
@@ -68,7 +99,7 @@ class Agent():
             except Exception as e:
                 raise RuntimeError(e)
 
-    def schedule(self, action, args=None, delay=0, value=None):
+    def schedule(self, action, args=None, delay=0, value=None, callbacks=[]):
         """
         The agent's schedule function.
         First it creates a simpy events, that will then execute the action
@@ -97,6 +128,8 @@ class Agent():
         elif isinstance(args, list):
             event.callbacks.append(
                 lambda e: action(**args))
+        for callback in callbacks:
+            event.callbacks.append(callback)
 
         self.tasks.put(lambda env: env.schedule(event=event, delay=delay))
         # return event
@@ -114,7 +147,6 @@ class Agent():
         # Schedule None to trigger Agent's loop termination
         self.tasks.put(None)
         self.comm.stop()
-        self._comm_thread.join()
 
     def create_timer(self, timeout, eid, msg=''):
         """
