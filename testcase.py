@@ -1,6 +1,5 @@
 # from sins import NetworkAllocator, NetworkLoad
-from network_allocator import NetworkAllocator
-from network_load import NetworkLoad
+from sens import NetworkAllocator, NetworkLoad, Allocation
 from concurrent.futures import ThreadPoolExecutor as Executor
 import logging
 import signal
@@ -11,7 +10,6 @@ import pandapower as pp
 import numpy as np
 import csv
 
-from defs import Allocation
 
 logger = logging.getLogger('ElectricalSimulation')
 logger.setLevel(logging.INFO)
@@ -59,7 +57,7 @@ class ElectricalSimulator:
 
     def create_allocator(self):
         self.allocator = NetworkAllocator(local='127.0.0.1:5555')
-        self.executor.submit(self.allocator.run)
+        self.allocator.run()
 
     def create_network(self, net):
         assert net != None and hasattr(net, 'load') and len(net.load) > 0
@@ -68,7 +66,7 @@ class ElectricalSimulator:
             self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
             self.allocation_id[l] = 0
             self.loads[l].curr_allocation = Allocation(0, self.net.load['p_kw'][l].item(), 0)
-            self.executor.submit(self.loads[l].run)
+            self.loads[l].run()
     
     def connect_network(self):
         for l in self.loads:
