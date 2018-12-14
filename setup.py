@@ -109,6 +109,7 @@ setup(
     # entry_points={
     #     'console_scripts': ['mycli=mymodule:cli'],
     # },
+    zip_safe=False,
     install_requires=REQUIRED,
     extras_require=EXTRAS,
     include_package_data=True,
