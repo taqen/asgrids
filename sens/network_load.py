@@ -36,6 +36,7 @@ class NetworkLoad(Agent):
         msg_type = p.ptype
         if msg_type == 'join_ack':
             self.__logger.info("Joined successfully allocator {}".format(src))
+            self.remote = src
         if msg_type == 'allocation':
             allocation = p.payload
             self.__logger.debug("allocation={}".format(allocation))
