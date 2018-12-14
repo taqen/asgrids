@@ -15,6 +15,9 @@ class NetworkAllocator(Agent):
         self.identity = self.nid
         self.type = "NetworkAllocator"
 
+        ## various callbacks
+        self.allocation_updated = None
+
     def receive_handle(self, p: Packet, src=None):
         """ Handle packets received and decoded at the AsyncCommunication layer.
 
@@ -68,7 +71,10 @@ class NetworkAllocator(Agent):
             msg = "node {} already added".format(nid)
             if allocation != self.nodes[nid]:
                 msg = "{} - updated allocation from {} to {}".format(msg, self.nodes[nid], allocation)
+                if callable(self.allocation_updated):
+                    self.allocation_updated(allocation, self.local)
                 self.nodes[nid] = allocation
+
             self.logger.info(msg)
         else:
             self.nodes[nid] = allocation
