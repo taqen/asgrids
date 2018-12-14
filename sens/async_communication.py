@@ -69,7 +69,7 @@ class AsyncCommunication(threading.Thread):
             logger.info('sending {} to {}'.format(request, socket_address))
             await self._client.send_multipart([p])
         except zmq.ZMQError as zmqerror:
-            logger.error("Error connecting client socket. {}".format(zmqerror))
+            logger.error("Error connecting client socket to address {}. {}".format(socket_address, zmqerror))
             raise zmqerror
 
     async def _run_server(self):

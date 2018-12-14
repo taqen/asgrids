@@ -130,7 +130,7 @@ class Agent():
             event.callbacks.append(
                 lambda e: action(**args))
         for callback in callbacks:
-            event.callbacks.append(callback)
+            event.callbacks.append(lambda e: callback())
 
         self.tasks.put(lambda env: env.schedule(event=event, delay=delay))
         # return event
