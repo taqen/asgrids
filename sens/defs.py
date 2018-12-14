@@ -14,9 +14,11 @@ packet_types = [
     'leave_ack'
     ]
 
-class Allocation(namedtuple('Allocation', ['aid', 'value', 'duration'])):
-    def __new__(cls, aid=0, value=0, duration=0):
-        return super(Allocation, cls).__new__(cls, aid, value, duration)
+class Allocation(namedtuple('Allocation', ['aid', 'p_value', 'q_value', 'duration'])):
+    def __new__(cls, aid=0, p_value=0, q_value=0, duration=0):
+        return super(Allocation, cls).__new__(cls, aid, p_value, q_value, duration)
+    def __eq__(self, y):
+        return self.p_value == y.p_value and self.q_value == y.q_value and self.duration == y.duration
 
 class Packet(namedtuple('Packet', ['ptype', 'payload', 'src'])):
     def __new__(cls, ptype, payload=None, src=None):
@@ -60,4 +62,3 @@ def EventId(p: Packet or Allocation, nid=0) -> str:
         return eid
     else:
         raise ValueError('EventId not implemented for Packet type {}'.format(p.ptype))
-        
