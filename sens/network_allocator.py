@@ -72,7 +72,7 @@ class NetworkAllocator(Agent):
             if allocation != self.nodes[nid]:
                 msg = "{} - updated allocation from {} to {}".format(msg, self.nodes[nid], allocation)
                 if callable(self.allocation_updated):
-                    self.allocation_updated(allocation, self.local)
+                    self.allocation_updated(allocation, nid)
                 self.nodes[nid] = allocation
 
             self.logger.info(msg)
