@@ -2,6 +2,7 @@ import signal
 import pandapower as pp
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 import numpy
 from time import time
 from queue import Queue
@@ -11,7 +12,7 @@ from sens import Allocation
 
 ## Define address of physical network nodes
 ## In this case, the first address is the allocator's
-net_addr=['10.10.10.1','10.10.10.98','10.10.10.110','10.10.10.94','10.10.10.36','10.10.10.45']
+net_addr=['10.10.10.1','10.10.10.216','10.10.10.77','10.10.10.27','10.10.10.239','10.10.10.155']
 
 ## Used localy to load and prepare data
 def load_csv(file, columns=[]):
@@ -44,7 +45,7 @@ def allocation_updated(allocation, node_addr):
     ## We receive node_addr as "X.X.X.X:YYYY"
     ## ind also identifies the node in pandapawer loads list
     ind = net_addr.index(node_addr.split(":")[0])
-    allocations_queue.put(["Load_{}".format(ind), allocation.p_value, allocation.q_value])
+    allocations_queue.put([time(), "Load_{}".format(ind), allocation.p_value, allocation.q_value])
 
 def create_nodes(sim):
     ## Create remote agents of type NetworkLoad
@@ -82,7 +83,7 @@ def create_pp_net(net):
                                 g_us_per_km=0,  # dielectric conductance of the line [micro Siemens per km]
                                 max_i_ka=0.282,  # maximal thermal current [kilo Ampere]
                                 )  # LV line (3x95 aluminium, Nexans ref. 10163510)
-
+    return net
 #########################################
 ## Create SmartGridSimulation environment
 sim = SmartGridSimulation()
@@ -104,21 +105,39 @@ allocator.allocation_updated = allocation_updated
 ## Create empty panda power network that will be filled later
 # create pandapower network
 net = pp.create_empty_network()
-create_pp_net(net)
+net = create_pp_net(net)
 create_nodes(sim)
 
-voltage_values = []
-plot, = plt.plot([], [])
-plot.xlabel('timestamp (1 sample = 10 minutes)')
-plot.ylabel('voltage value (p.u.)')
-plot.show(block=False)
-while True:
-    name, p_kw, q_kw = allocations_queue.get()
+fig = plt.figure()
+ax = fig.add_subplot(1, 1, 1)
+xs = []
+ys = []
+
+def animate(i, xs, ys):
+    timestamp, name, p_kw, q_kw = allocations_queue.get()
+    print("\n\n{}: P, Q = {}, {}".format(name, p_kw, q_kw))
     net.load.loc[net.load['name'] == name, 'p_kw'] = p_kw
     net.load.loc[net.load['name'] == name, 'q_kw'] = q_kw
     pp.runpp(net)
-    voltage_values.append(net.res_bus.loc[1, 'vm_pu'])
-    plot.set_ydata(numpy.append(plot.get_xdata(), voltage_values))
-    plot.set_ydata(numpy.append(plot.get_ydata(), time()-initial_time))
-    plt.draw()
+    vm_pu = net.res_bus.loc[1, 'vm_pu']
+    print("\n\n\nVotage:\n{}\n\n\n".format(vm_pu))
+    # Add x and y to lists
+    xs.append(timestamp-initial_time)
+    ys.append(vm_pu)
 
+    # Limit x and y lists to 20 items
+    xs = xs[-20:]
+    ys = ys[-20:]
+
+    # Draw x and y lists
+    ax.clear()
+    ax.plot(xs, ys)
+
+    # Format plot
+    plt.xticks(rotation=45, ha='right')
+    plt.subplots_adjust(bottom=0.30)
+    plt.title('Voltage value over Time')
+    plt.ylabel('voltage value (p.u.)')
+
+ani = animation.FuncAnimation(fig, animate, fargs=(xs, ys), interval=1000)
+plt.show()
