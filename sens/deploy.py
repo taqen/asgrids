@@ -35,16 +35,14 @@ class SmartGridSimulation:
     """
     Make sure 'sens' library is available remotely
     """
-    def check_remote(self, remote_server, ntype='load', python_pkg_path="/home/ubuntu/.local/lib/python3.7/site-packages/"):
+    def check_remote(self, remote_server, python_pkg_path="/home/ubuntu/.local/lib/python3.6/site-packages/"):
         conn = remote_server.classic_connect()
-        if "sens" not in conn.modules:
-            rpyc.classic.upload_package(
-                conn,
-                sens,
-                python_pkg_path)
-            return False
-        else:
-            return True
+        import os
+        rpyc.classic.upload_package(
+            conn,
+            sens,
+            os.path.join(python_pkg_path, "sens"))
+        return False
 
     """
     Create node with type 'ntype' on the remote machine `hostname`
@@ -83,7 +81,9 @@ class SmartGridSimulation:
         else:
             raise ValueError("Can't handle ntype == {}".format(ntype))
         self.nodes.append(node)
-        return node
+
+        ## Return node netref object and rpyc connection
+        return node, conn
 
 
     """
@@ -112,8 +112,8 @@ class SmartGridSimulation:
     Stops the remotely created nodes
     """
     def stop(self):
-        for node in self.nodes:
-            node.stop()
+        # for node in self.nodes:
+        #     node.stop()
         for server in self.remote_servers:
             server.close()
         self.node = []
