@@ -109,9 +109,9 @@ create_nodes(sim)
 
 voltage_values = []
 plot, = plt.plot([], [])
-plot.set_xlabel('timestamp (1 sample = 10 minutes)')
-plot.set_ylabel('voltage value (p.u.)')
-
+plot.xlabel('timestamp (1 sample = 10 minutes)')
+plot.ylabel('voltage value (p.u.)')
+plot.show(block=False)
 while True:
     name, p_kw, q_kw = allocations_queue.get()
     net.load.loc[net.load['name'] == name, 'p_kw'] = p_kw
