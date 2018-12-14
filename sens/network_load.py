@@ -1,7 +1,6 @@
 from .defs import Packet, Allocation, EventId
 from .agent import Agent
 from .async_communication import AsyncCommunication
-import logging
 import simpy
 
 class NetworkLoad(Agent):
@@ -13,10 +12,7 @@ class NetworkLoad(Agent):
         self.local = local
         self.callback = self.receive_handle
         self.identity = self.nid
-        
-        loggername = 'Agent.NetworkLoad.{}'.format(self.local)
-        self.__logger = logging.getLogger(loggername)
-        self.__logger.info("initializing")
+        self.type = "NetworkLoad"
 
     def receive_handle(self, p, src=None):
         """ Handled payload received from AsyncCommunication
@@ -32,14 +28,14 @@ class NetworkLoad(Agent):
         if src is None:
             src = p.src
 
-        self.__logger.info("handling {} from {}".format(p, src))
+        self.logger.info("handling {} from {}".format(p, src))
         msg_type = p.ptype
         if msg_type == 'join_ack':
-            self.__logger.info("Joined successfully allocator {}".format(src))
+            self.logger.info("Joined successfully allocator {}".format(src))
             self.remote = src
         if msg_type == 'allocation':
             allocation = p.payload
-            self.__logger.debug("allocation={}".format(allocation))
+            self.logger.debug("allocation={}".format(allocation))
             self.schedule(
                 action=self.send_ack,
                 args={
@@ -50,7 +46,7 @@ class NetworkLoad(Agent):
                 action=self.allocation_handle,
                 args={'allocation': allocation})
         if msg_type == 'stop':
-            self.__logger.info("Received Stop from {}".format(src))
+            self.logger.info("Received Stop from {}".format(src))
             self.comm.send(Packet(ptype='stop_ack', src=self.local), src)
             self.schedule(self.stop)
 
@@ -63,7 +59,7 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.__logger.info(
+        self.logger.info(
             "{} - Current allocation value is {}".format(
             self.local,
             self.curr_allocation)
@@ -71,7 +67,7 @@ class NetworkLoad(Agent):
 
         self.curr_allocation = allocation
 
-        self.__logger.info(
+        self.logger.info(
             "{} - New allocation value is {}".format(
             self.local,
             self.curr_allocation)
@@ -83,7 +79,7 @@ class NetworkLoad(Agent):
     def allocation_report(self):
         packet = Packet('curr_allocation', self.curr_allocation, self.local)
 
-        self.__logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
+        self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
 
         self.comm.send(packet, self.remote)
 
@@ -104,7 +100,7 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.__logger.info('Joining {}'.format(dst))
+        self.logger.info('Joining {}'.format(dst))
         packet = Packet('join', self.curr_allocation, self.local)
         self.comm.send(packet, dst)
 
@@ -122,7 +118,7 @@ class NetworkLoad(Agent):
         self.comm.send(packet, dst)
 
     def send_leave(self, dst):
-        self.__logger.info("Leaving {}".format(dst))
+        self.logger.info("Leaving {}".format(dst))
     
         packet = Packet(ptype='leave', src=self.local)
 
@@ -130,5 +126,5 @@ class NetworkLoad(Agent):
 
     def stop(self):
         # Stop underlying simpy event loop
-        self.__logger.info("Stopping Simpy")
+        self.logger.info("Stopping Simpy")
         super(NetworkLoad, self).stop()
