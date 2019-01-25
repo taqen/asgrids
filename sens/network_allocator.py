@@ -11,7 +11,6 @@ class NetworkAllocator(Agent):
         self.alloc_ack_timeout = 2
         self.stop_ack_timeout = 5
         self.local = local
-        self.callback = self.receive_handle
         self.identity = self.nid
         self.type = "NetworkAllocator"
 
@@ -25,9 +24,8 @@ class NetworkAllocator(Agent):
         :param src: source of payload
         :returns:
         :rtype:
-
         """
-        assert isinstance(p, Packet), p
+        assert isinstance(p, Packet)
         src = src
         if src is None:
             src = p.src
@@ -109,7 +107,7 @@ class NetworkAllocator(Agent):
             timeout=self.alloc_ack_timeout,
             msg='no ack from {} for allocation {}'.format(
                nid, allocation.aid))
-        self.comm.send(packet, nid)
+        self.send(packet, nid)
 
     def send_join_ack(self, dst):
         """ Acknowledge a network node has joing the network (added to known nodes list)
@@ -121,7 +119,7 @@ class NetworkAllocator(Agent):
         """
         packet = Packet('join_ack', src=self.local)
         self.logger.info("{} sending join ack to {}".format(self.local, dst))
-        self.comm.send(packet, remote=dst)
+        self.send(packet, remote=dst)
 
     def stop_network(self):
         """ Stops the allocator.
@@ -135,7 +133,7 @@ class NetworkAllocator(Agent):
         packet = Packet(ptype='stop', src=self.local)
         # Stopping register nodes
         for node in list(self.nodes):
-            self.comm.send(request=packet, remote=node)
+            self.send(request=packet, remote=node)
             self.logger.info("Sent stop to {}".format(node))
             eid = EventId(packet, node)
             self.create_timer(

@@ -1,6 +1,9 @@
 from collections import namedtuple
 import msgpack
 import hashlib
+from queue import Queue
+from typing import Callable, Union
+from random import Random
 
 packet_types = [
     'allocation', 
@@ -43,22 +46,48 @@ def ext_unpack(code, data):
         aid, value, duration = msgpack.unpackb(data, ext_hook=ext_unpack, encoding='utf-8')
         return Allocation(aid, value, duration)
 
-def EventId(p: Packet or Allocation, nid=0) -> str:
+def EventId(p, nid=0) -> str:
     if isinstance(p, Allocation):
         assert isinstance(nid, str)
         eid = hashlib.md5('allocation {} {}'.format(p.aid,nid).encode()).hexdigest()
         return eid
-    elif p.ptype == 'allocation' or p.ptype == 'allocation_ack':
-        assert nid == 0
-        eid = hashlib.md5('allocation {} {}'.format(p.payload.aid, p.src).encode()).hexdigest()
-        return eid
-    elif p.ptype == 'stop_ack':
-        assert nid == 0
-        eid = hashlib.md5('stop {}'.format(p.src).encode()).hexdigest()
-        return eid
-    elif p.ptype == 'stop':
-        assert isinstance(nid, str)
-        eid = hashlib.md5('stop {}'.format(nid).encode()).hexdigest()
-        return eid
+    elif isinstance(p, Packet):
+        if p.ptype == 'allocation' or p.ptype == 'allocation_ack':
+            assert nid == 0
+            eid = hashlib.md5('allocation {} {}'.format(p.payload.aid, p.src).encode()).hexdigest()
+            return eid
+        elif p.ptype == 'stop_ack':
+            assert nid == 0
+            eid = hashlib.md5('stop {}'.format(p.src).encode()).hexdigest()
+            return eid
+        elif p.ptype == 'stop':
+            assert isinstance(nid, str)
+            eid = hashlib.md5('stop {}'.format(nid).encode()).hexdigest()
+            return eid
+        else:
+            raise ValueError('EventId not implemented for Packet type {}'.format(p.ptype))
     else:
-        raise ValueError('EventId not implemented for Packet type {}'.format(p.ptype))
+        raise ValueError('EventId not implemented for {}'.format(p))
+
+class AllocationGenerator():
+    def __init__(self):
+        self._random = Random()
+        self._aid :int = 0
+        self._callback :Callable = None
+
+    def hook(self, callback: Callable):
+        self._callback = callback
+
+    def unhook(self):
+        self._callback = None
+
+    def get_allocation(self) -> Allocation:
+        raise NotImplementedError
+
+class MeasuresProvidor():
+    def __init__(self, ):
+        self.current_measure = Queue(maxsize=1)
+        pass
+    
+    def get_measure(self):
+        return self.current_measure.get()

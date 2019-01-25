@@ -2,6 +2,7 @@ from .defs import Packet, Allocation, EventId
 from .agent import Agent
 from .async_communication import AsyncCommunication
 import simpy
+import typing
 
 class NetworkLoad(Agent):
     def __init__(self, local=None, remote=None, env=None):
@@ -13,6 +14,9 @@ class NetworkLoad(Agent):
         self.callback = self.receive_handle
         self.identity = self.nid
         self.type = "NetworkLoad"
+        self.curr_measure = 0
+        self.update_measure :Callable = None
+        self.joined_callback :Callable = None
 
     def receive_handle(self, p, src=None):
         """ Handled payload received from AsyncCommunication
@@ -24,15 +28,14 @@ class NetworkLoad(Agent):
 
         """
         assert isinstance(p, Packet), p
-        src = src
-        if src is None:
-            src = p.src
 
-        self.logger.info("handling {} from {}".format(p, src))
+        self.logger.info("handling {} from {}".format(p, p.src))
         msg_type = p.ptype
         if msg_type == 'join_ack':
-            self.logger.info("Joined successfully allocator {}".format(src))
-            self.remote = src
+            self.logger.info("Joined successfully allocator {}".format(p.src))
+            self.remote = p.src
+            if self.joined_callback is not None:
+                self.joined_callback(self.local, self.remote)
         if msg_type == 'allocation':
             allocation = p.payload
             self.logger.debug("allocation={}".format(allocation))
@@ -47,7 +50,7 @@ class NetworkLoad(Agent):
                 args={'allocation': allocation})
         if msg_type == 'stop':
             self.logger.info("Received Stop from {}".format(src))
-            self.comm.send(Packet(ptype='stop_ack', src=self.local), src)
+            self.send(Packet(ptype='stop_ack', src=self.local), src)
             self.schedule(self.stop)
 
 
@@ -77,11 +80,17 @@ class NetworkLoad(Agent):
         #yield self.env.timeout(allocation.duration)
 
     def allocation_report(self):
-        packet = Packet('curr_allocation', self.curr_allocation, self.local)
-
-        self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
-
-        self.comm.send(packet, self.remote)
+        if self.remote is not None:
+            self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
+            if self.update_measure is not None:
+                measure = self.update_measure(self.curr_allocation, self.local)
+                if measure is not None:
+                    self.curr_measure = measure
+                    self.logger.info("Current measure is {}".format(measure))
+            packet = Packet('curr_allocation', self.curr_allocation, self.local)
+            self.send(packet, self.remote)
+        else:
+            self.logger.info("Not reporting, remote not defined yet")
 
     def join_ack_handle(self):
         """ handle received join ack
@@ -100,9 +109,9 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.logger.info('Joining {}'.format(dst))
+        self.logger.info('{} Joining {}'.format(self.local, dst))
         packet = Packet('join', self.curr_allocation, self.local)
-        self.comm.send(packet, dst)
+        self.send(packet, dst)
 
     def send_ack(self, allocation, dst):
         """ Acknowledge a requested allocation to the Allocator.
@@ -115,14 +124,14 @@ class NetworkLoad(Agent):
         """
         packet = Packet('allocation_ack', allocation, self.local)
 
-        self.comm.send(packet, dst)
+        self.send(packet, dst)
 
     def send_leave(self, dst):
         self.logger.info("Leaving {}".format(dst))
     
         packet = Packet(ptype='leave', src=self.local)
 
-        self.comm.send(packet, dst)
+        self.send(packet, dst)
 
     def stop(self):
         # Stop underlying simpy event loop

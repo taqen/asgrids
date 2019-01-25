@@ -114,6 +114,8 @@ class SmartGridSimulation:
     def stop(self):
         # for node in self.nodes:
         #     node.stop()
+        for node in self.nodes:
+            node.stop()
         for server in self.remote_servers:
             server.close()
         self.node = []

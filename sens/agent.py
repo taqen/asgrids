@@ -4,6 +4,8 @@ import hashlib
 from simpy.core import Environment, NORMAL, Infinity
 import simpy
 from heapq import heappush
+from random import Random
+
 from .async_communication import AsyncCommunication
 from .defs import Packet, Allocation, EventId
 import logging
@@ -19,6 +21,13 @@ ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
+class ErrorModel():
+    def __init__(self, rate=1.0, seed=None):
+        self.rate = rate
+        self.ran = Random(seed)
+
+    def corrupt(self, packet):
+        return self.ran.random() >= self.rate
 
 class AgentEnvironment(Environment):
     def schedule(self, event, priority=NORMAL, delay=0):
@@ -43,8 +52,18 @@ class Agent():
         self.timeouts = {}
         self._local = None
         self.comm = AsyncCommunication()
+        self.comm._callback = self.receive
+        self._error_model = ErrorModel()
         self._sim_thread = Thread(target=self._run)
         self.logger = None
+
+    @property
+    def error_model(self):
+        return self._error_model
+
+    @error_model.setter
+    def error_model(self, model):
+        self._error_model = model
 
     @property
     def local(self):
@@ -58,11 +77,14 @@ class Agent():
             self.comm.stop()
             self.comm._local_address = value
             self.comm.start()
-        else:
-            self.comm._local_address = value
+
     @property
     def callback(self):
         return self.comm._callback
+
+    @callback.setter
+    def callback(self, value):
+        self.comm._callback = value
 
     @property
     def identity(self):
@@ -71,10 +93,6 @@ class Agent():
     @identity.setter
     def identity(self, value):
         self.comm._identity = value
-
-    @callback.setter
-    def callback(self, value):
-        self.comm._callback = value
 
     def run(self):
         self.logger = logging.getLogger('Agent.{}.{}'.format(self.type, self.local))
@@ -94,6 +112,7 @@ class Agent():
             except queue.Empty:
                 continue
             if not func:
+                self.env = None
                 return
             try:
                 func(self.env)
@@ -181,3 +200,25 @@ class Agent():
             self.logger.debug("canceled timer {} at {}".format(eid, self.env.now))
         except Exception as e:
             self.logger.warning("remote_timeout, couldn't interrupt timeout {} \n {}".format(eid,e))
+
+    def send(self, packet, remote):
+        if isinstance(self._error_model, ErrorModel):
+            if not self._error_model.corrupt(packet):
+                self.comm.send(packet, remote)
+            else:
+                self.logger.info("packet error occured at Agent.send")
+        else:
+            self.comm.send(packet, remote)
+
+    def receive(self, packet, src=None):
+        self.logger.info("receiving {}".format(packet))
+        if isinstance(self._error_model, ErrorModel):
+            if not self._error_model.corrupt(packet):
+                self.receive_handle(packet, src)
+            else:
+                self.logger.info("packet error occured at Agent.receive")
+        else:
+            self.receive_handle(packet, src)
+
+    def receive_handle(self, packet, src=None):
+        raise NotImplementedError("must override receive_handle")
