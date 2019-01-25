@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import threading
+from random import Random
 
 import zmq
 import zmq.asyncio
@@ -9,6 +10,12 @@ import msgpack
 from .defs import ext_pack, ext_unpack
 
 logger = logging.getLogger('AsyncCommThread')
+# logger.setLevel(logging.DEBUG)
+# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ch = logging.StreamHandler()
+# ch.setLevel(logging.DEBUG)
+# ch.setFormatter(formatter)
+# logger.addHandler(ch)
 
 class AsyncCommunication(threading.Thread):
     def __init__(self, local_address = None, callback=None, identity=None):
@@ -26,25 +33,12 @@ class AsyncCommunication(threading.Thread):
         asyncio.set_event_loop(self._loop)
         self._context = zmq.asyncio.Context()
         self._poller = zmq.asyncio.Poller()
-        self._client = self._context.socket(zmq.DEALER)
-        # No lingering after socket is closed.
-        # This has proven to cause problems terminating asyncio if not 0
-        self._client.setsockopt(zmq.LINGER, 100)
 
         name = 'AsyncCommThread'
         if identity:
             name = name + identity
         threading.Thread.__init__(self, name=name)
     def run(self):
-        if self._identity is not None:
-            logger.info("identity is %s" % self._identity)
-            identity = msgpack.packb(self._identity, encoding='utf-8')
-            try:
-                self._client.setsockopt(zmq.IDENTITY, identity)
-            except zmq.ZMQError as zmqerror:
-                logger.error("Error setting socket identity. {}".format(zmqerror))
-                raise zmqerror
-
         self.running = True
         server_future = asyncio.ensure_future(
             self._run_server(),
@@ -62,12 +56,27 @@ class AsyncCommunication(threading.Thread):
             raise e
 
         try:
+            if self._identity is not None:
+                logger.info("identity is %s" % self._identity)
+                identity = msgpack.packb(self._identity, encoding='utf-8', strict_types=True)
+                try:
+                    self._client.setsockopt(zmq.IDENTITY, identity)
+                except zmq.ZMQError as zmqerror:
+                    logger.error("Error setting socket identity. {}".format(zmqerror))
+                    raise zmqerror
+
+            self._client = self._context.socket(zmq.DEALER)
+            # No lingering after socket is closed.
+            # This has proven to cause problems terminating asyncio if not 0
+            self._client.setsockopt(zmq.LINGER, 1000)
             socket_address = 'tcp://{}'.format(remote)
-            logger.info("Connecting to {}".format(socket_address))
+            logger.info("{} connecting to {}".format(self._local_address, socket_address))
             self._client.connect(socket_address)
             self._poller.register(self._client, zmq.POLLIN)
-            logger.info('sending {} to {}'.format(request, socket_address))
+            logger.info('{} sending {} to {}'.format(self._local_address, request, socket_address))
             await self._client.send_multipart([p])
+            self._poller.unregister(self._client)
+            self._client.close()
         except zmq.ZMQError as zmqerror:
             logger.error("Error connecting client socket to address {}. {}".format(socket_address, zmqerror))
             raise zmqerror
@@ -80,19 +89,18 @@ class AsyncCommunication(threading.Thread):
         self._server = self._context.socket(zmq.ROUTER)
         self._server.bind('tcp://{}'.format(self._local_address))
         self._poller.register(self._server, zmq.POLLIN)
-        logger.info('running server')
+        logger.info('running server on tcp://{}.'.format(self._local_address))
         while self.running:
             items = dict(await self._poller.poll(self._timeout))
             if self._server in items and items[self._server] == zmq.POLLIN:
                 logger.debug("receiving at server")
-                ident, msg = await self._server.recv_multipart()
+                _, msg = await self._server.recv_multipart()
                 try:
                     p = msgpack.unpackb(msg, ext_hook=ext_unpack, encoding='utf-8')
-                    ident = msgpack.unpackb(ident, encoding='utf-8')
+                    #ident = msgpack.unpackb(ident, encoding='utf-8')
                 except Exception as e:
-                    print(p)
-                    # raise e
-                logger.debug('server received {} from {}'.format(p, ident))
+                    raise e
+                logger.debug('server received {}'.format(p))
                 await self._loop.run_in_executor(self._executor,
                                                 self._callback,
                                                 p)
@@ -100,7 +108,7 @@ class AsyncCommunication(threading.Thread):
         self._poller.unregister(self._server)
         self._server.close()
 
-    def send(self, request, remote=None):
+    def send(self, request, remote):
         logger.debug("send {} to {}".format(request, remote))
         asyncio.run_coroutine_threadsafe(
             self._send(request, remote=remote), self._loop)
