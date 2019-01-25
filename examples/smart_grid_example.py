@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy
+import random
 from time import time
 from queue import Queue
 from sens import SmartGridSimulation
@@ -12,7 +13,7 @@ from sens import Allocation
 
 ## Define address of physical network nodes
 ## In this case, the first address is the allocator's
-net_addr=['10.10.10.1','10.10.10.216','10.10.10.77','10.10.10.27','10.10.10.239','10.10.10.155']
+net_addr=['10.10.10.1','10.10.10.144','10.10.10.45','10.10.10.88','10.10.10.253','10.10.10.219']
 
 ## Used localy to load and prepare data
 def load_csv(file, columns=[]):
@@ -24,26 +25,22 @@ def load_csv(file, columns=[]):
 
 ## to be used remotely to implement node's consumption behavior
 ## This is an example of how to schedule events from a loaded timeseries
-def func(conn, loads):
-    # put remote imports in function body
-    # to make sure import is executed remotely
-    # Scheduling allocation
-    REMOTE_EXECUTE = r"""\
-from sens import Allocation
-allocation = Allocation(0, v[1], v[2])
-node.schedule(action=node.allocation_handle, 
-    args={'allocation':allocation}, 
-    delay=v[0], 
-    callbacks=[node.allocation_report])
-"""
+def remote_func(node, loads):
+    # For better performance it is better that
+    # loads reference an already delivered netref object.
+    # Scheduling allocations
     for v in loads:
-        conn.namespace['v'] = sim.deliver(conn, v)
-        conn.execute(REMOTE_EXECUTE)       
+        allocation = Allocation(0, v[1], v[2])
+        node.schedule(action=node.allocation_handle,
+        args={'allocation':allocation},
+        delay=v[0],
+        callbacks=[node.allocation_report])
 
-allocations_queue = Queue()
+allocations_queue :Queue = Queue()
 def allocation_updated(allocation, node_addr):
     ## We receive node_addr as "X.X.X.X:YYYY"
     ## ind also identifies the node in pandapawer loads list
+    print("allocation received allocation update")
     ind = net_addr.index(node_addr.split(":")[0])
     allocations_queue.put([time(), "Load_{}".format(ind), allocation.p_value, allocation.q_value])
 
@@ -56,14 +53,26 @@ def create_nodes(sim):
             hostname=net_addr[i+1], username='ubuntu', keyfile='~/.ssh/id_rsa.pub')
         ## This will be address in the simulation network
         ## "node" is already registered in remote namespace
-        conn.execute("node.local = '{}:5000'".format(net_addr[i+1]))
-        conn.execute("node.run()")
-        conn.execute("node.schedule(node.send_join, {{'dst':'{}:5555'}})".format(net_addr[0]))
+        remote_value = sim.deliver(conn, net_addr[i+1])
+        # conn.execute("node.local = '{}:5000'".format(remote_value))
+        node.local = '{}:{}'.format(remote_value, random.randint(6000, 9000))
+        # conn.execute("node.run()")
+        node.run()
+        remote_value = sim.deliver(conn, {'dst':'{}:5555'.format(net_addr[0])})
+        # conn.execute("node.schedule(node.send_join, {{'dst':'{}:5555'}})".format(remote_value))
+        node.schedule(node.send_join, remote_value)
 
-    for i in range(len(net_addr)-1):
-        conn = sim.conns[i]
         loads = load_csv('../victor_scripts/curves.csv', ['timestamp','load_%d_p'%(i+1), 'load_%d_q'%(i+1)])
-        func(conn, loads)
+        remote_loads = sim.deliver(conn, loads)
+        remote_func(node, remote_loads)
+
+    # for i in range(len(net_addr)-1):
+    #     conn = sim.conns[i]
+    #     loads = load_csv('../victor_scripts/curves.csv', ['timestamp','load_%d_p'%(i+1), 'load_%d_q'%(i+1)])
+    #     remote_loads = sim.deliver(conn, loads)
+    #     remote_func(node, remote_loads)
+        #func(conn, loads)
+
 
 def create_pp_net(net):
     b1 = pp.create_bus(net, vn_kv=0.4, name="MV/LV substation")  # LV side of the MV/LV transformer
@@ -84,6 +93,7 @@ def create_pp_net(net):
                                 max_i_ka=0.282,  # maximal thermal current [kilo Ampere]
                                 )  # LV line (3x95 aluminium, Nexans ref. 10163510)
     return net
+
 #########################################
 ## Create SmartGridSimulation environment
 sim = SmartGridSimulation()
@@ -110,8 +120,8 @@ create_nodes(sim)
 
 fig = plt.figure()
 ax = fig.add_subplot(1, 1, 1)
-xs = []
-ys = []
+xs :list = []
+ys :list = []
 
 def animate(i, xs, ys):
     timestamp, name, p_kw, q_kw = allocations_queue.get()
