@@ -50,12 +50,11 @@ def create_nodes(sim):
         ## a bigger latency overhead is noted using netref objects (node)
         ## Fortunately we can directly execute python remotely with conn
         node, conn = sim.create_remote_node(
-            hostname=net_addr[i+1], username='ubuntu', keyfile='~/.ssh/id_rsa.pub')
+            hostname=net_addr[i+1], username='ubuntu', keyfile='~/.ssh/id_rsa.pub',
+            ntype='load', addr='{}:{}'.format(remote_value, random.randint(6000, 9000)))
         ## This will be address in the simulation network
         ## "node" is already registered in remote namespace
         remote_value = sim.deliver(conn, net_addr[i+1])
-        # conn.execute("node.local = '{}:5000'".format(remote_value))
-        node.local = '{}:{}'.format(remote_value, random.randint(6000, 9000))
         # conn.execute("node.run()")
         node.run()
         remote_value = sim.deliver(conn, {'dst':'{}:5555'.format(net_addr[0])})
