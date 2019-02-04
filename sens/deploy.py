@@ -118,11 +118,11 @@ class SmartGridSimulation:
     def stop(self):
         # for node in self.nodes:
         #     node.stop()
-        for node in self.nodes:
+        for _, node in self.nodes.items():
             node.stop()
         for server in self.remote_servers:
             server.close()
-        self.node = []
+        self.node = {}
         self.remote_machines = []
         self.remote_servers = []
         self.server_threads = []
