@@ -23,28 +23,28 @@ class Allocation(namedtuple('Allocation', ['aid', 'p_value', 'q_value', 'duratio
     def __eq__(self, y):
         return self.p_value == y.p_value and self.q_value == y.q_value and self.duration == y.duration
 
-class Packet(namedtuple('Packet', ['ptype', 'payload', 'src'])):
-    def __new__(cls, ptype, payload=None, src=None):
+class Packet(namedtuple('Packet', ['ptype', 'payload', 'src', 'dst'])):
+    def __new__(cls, ptype, payload=None, src=None, dst=None):
         if ptype not in packet_types:
             raise ValueError('Undefined packet type {}'.format(ptype))
         if ptype in ['allocation', 'curr_allocation']:
             assert isinstance(payload, Allocation), 'Packet type "allocation" needs an allocation payload not a {}'.format(type(payload))
-        return super(Packet, cls).__new__(cls, ptype, payload, src)
+        return super(Packet, cls).__new__(cls, ptype, payload, src, dst)
 
 def ext_pack(x):
     if isinstance (x, Packet):
-        return msgpack.ExtType(1, msgpack.packb([x[0], x[1], x[2]], default=ext_pack, strict_types=True))
+        return msgpack.ExtType(1, msgpack.packb([x[0], x[1], x[2], x[3]], default=ext_pack, strict_types=True))
     elif isinstance(x, Allocation):
-        return msgpack.ExtType(2, msgpack.packb([x[0], x[1], x[2]], default=ext_pack, strict_types=True))
+        return msgpack.ExtType(2, msgpack.packb([x[0], x[1], x[2], x[3]], default=ext_pack, strict_types=True))
     return x
 
 def ext_unpack(code, data):
     if code == 1:
-        ptype, payload, src = msgpack.unpackb(data, ext_hook=ext_unpack, encoding='utf-8')
-        return Packet(ptype, payload, src)
+        ptype, payload, src, dst= msgpack.unpackb(data, ext_hook=ext_unpack, encoding='utf-8')
+        return Packet(ptype, payload, src, dst)
     elif code == 2:
-        aid, value, duration = msgpack.unpackb(data, ext_hook=ext_unpack, encoding='utf-8')
-        return Allocation(aid, value, duration)
+        aid, p_value, q_value, duration = msgpack.unpackb(data, ext_hook=ext_unpack, encoding='utf-8')
+        return Allocation(aid, p_value, q_value, duration)
 
 def EventId(p, nid=0) -> str:
     if isinstance(p, Allocation):
