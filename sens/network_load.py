@@ -36,7 +36,7 @@ class NetworkLoad(Agent):
         """
         assert isinstance(p, Packet), p
 
-        self.logger.info("handling {} from {}".format(p, p.src))
+        self.logger.warning("handling {} from {}".format(p, p.src))
         msg_type = p.ptype
 
         if msg_type == 'join_ack':
@@ -58,15 +58,15 @@ class NetworkLoad(Agent):
                 action=self.send_ack,
                 args={
                     'allocation': allocation,
-                    'dst': src
+                    'dst': p.src
                 })
             self.schedule(
                 action=self.handle_allocation,
                 args={'allocation': allocation})
 
         if msg_type == 'stop':
-            self.logger.info("Received Stop from {}".format(src))
-            self.send(Packet(ptype='stop_ack', src=self.local), src)
+            self.logger.info("Received Stop from {}".format(p.src))
+            self.send(Packet(ptype='stop_ack', src=self.local), p.src)
             self.schedule(self.stop)
 
     def handle_allocation(self, allocation):

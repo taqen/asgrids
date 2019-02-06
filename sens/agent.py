@@ -14,12 +14,12 @@ import queue
 from threading import Thread
 
 logger = logging.getLogger('Agent')
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-ch.setFormatter(formatter)
-logger.addHandler(ch)
+# logger.setLevel(logging.INFO)
+# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ch = logging.StreamHandler()
+# ch.setLevel(logging.INFO)
+# ch.setFormatter(formatter)
+# logger.addHandler(ch)
 
 class ErrorModel():
     def __init__(self, rate=1.0, seed=None):
@@ -168,7 +168,7 @@ class Agent():
         self.tasks.put(None)
         self.comm.stop()
 
-    def create_timer(self, timeout, eid, msg=''):
+    def create_timeout(self, timeout, eid, msg=''):
         """
         Creating a timer using simpy's timeout.
         A timer will clear itself from Agents timeouts list after expiration.
@@ -178,12 +178,13 @@ class Agent():
             try:
                 yield self.env.timeout(timeout, value=eid)
             except simpy.exceptions.Interrupt:
-                self.logger.debug("event_process interrupted for eid {}".format(eid))
+                # self.logger.warning("event_process interrupted for eid {}".format(eid))
                 return
-            self.logger.debug("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
+            self.logger.warning("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
             self.schedule(self.remove_timeout, args={'eid':eid})
         event = self.env.process(event_process())
-        self.timeouts[eid] = event
+        return event
+        # self.timeouts[eid] = event
 
     def remove_timeout(self, eid):
         """

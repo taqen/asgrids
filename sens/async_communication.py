@@ -111,7 +111,7 @@ class AsyncCommunication(threading.Thread):
     def send(self, request, remote):
         logger.debug("send {} to {}".format(request, remote))
         asyncio.run_coroutine_threadsafe(
-            self._send(request, remote=remote), self._loop)
+            self._send(request=request, remote=remote), self._loop)
 
     def stop(self):
         logger.info("Stopping AsyncCommThread")

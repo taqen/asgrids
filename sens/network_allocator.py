@@ -13,7 +13,7 @@ class NetworkAllocator(Agent):
         self.local = local
         self.identity = self.nid
         self.type = "NetworkAllocator"
-
+        self.alloc_timeouts = {}
         ## various callbacks
         self.allocation_updated = None
 
@@ -39,7 +39,7 @@ class NetworkAllocator(Agent):
             self.add_node(nid=p.src, allocation=p.payload)
             # Interrupting timeout event for this allocation
             eid = EventId(p)
-            self.schedule(self.remove_timeout, {'eid':eid})
+            self.alloc_timeouts[p.src].interrupt()
         elif msg_type == 'leave':
             self.schedule(self.remove_node, {'nid':p.src})
         if msg_type == 'stop':
@@ -98,16 +98,16 @@ class NetworkAllocator(Agent):
 
         """
         self.logger.info("sending allocation to {}".format(nid))
-        packet = Packet(ptype='allocation', payload=allocation, src=self.local)
+        packet = Packet(ptype='allocation', payload=allocation, src=self.local, dst=nid)
 
         # Creating Event that is triggered if no ack is received before a timeout
         eid = EventId(allocation, nid)
-        self.create_timer(
-            eid=eid,
-            timeout=self.alloc_ack_timeout,
-            msg='no ack from {} for allocation {}'.format(
-               nid, allocation.aid))
-        self.send(packet, nid)
+        self.alloc_timeouts[nid] = self.create_timeout(
+                                                eid=eid,
+                                                timeout=self.alloc_ack_timeout,
+                                                msg='no ack from {} for allocation {}'.format(
+                                                nid, allocation.aid))
+        self.send(packet, remote=nid)
 
     def send_join_ack(self, dst):
         """ Acknowledge a network node has joing the network (added to known nodes list)
@@ -117,7 +117,7 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        packet = Packet('join_ack', src=self.local)
+        packet = Packet('join_ack', src=self.local, dst=dst)
         self.logger.info("{} sending join ack to {}".format(self.local, dst))
         self.send(packet, remote=dst)
 
@@ -130,10 +130,10 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        packet = Packet(ptype='stop', src=self.local)
         # Stopping register nodes
         for node in list(self.nodes):
-            self.send(request=packet, remote=node)
+            packet = Packet(ptype='stop', src=self.local, dst=node)
+            self.send(packet, remote=node)
             self.logger.info("Sent stop to {}".format(node))
             eid = EventId(packet, node)
             self.create_timer(
