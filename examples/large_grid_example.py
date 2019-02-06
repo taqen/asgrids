@@ -5,9 +5,10 @@ import pandapower.networks as pn
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import numpy
+import numpy as np
 import random
 import asyncio
+from threading import Lock
 from concurrent.futures import ThreadPoolExecutor as Executor
 from time import time, sleep
 from queue import Empty, Full
@@ -17,6 +18,7 @@ from sens import Allocation
 import tracemalloc
 import os
 import linecache
+from copy import deepcopy, copy
 
 def display_top(snapshot, key_type='lineno', limit=10):
     snapshot = snapshot.filter_traces((
@@ -60,7 +62,9 @@ def monitor_memory(N):
 allocations_queue: Queue = Queue()
 measure_queues: dict = {}
 network_size: Queue = Queue()
-plot_values: Queue = Queue()
+plot_values: Queue = Queue(100)
+optimal_values :Queue = Queue()
+lock = Lock()
 ## Create SmartGridSimulation environment
 sim = SmartGridSimulation()
 #%%
@@ -132,36 +136,26 @@ signal.signal(signal.SIGINT, shutdown)
 
 port = gen_port(5555)
 
-#%%
-## Create a local Agent of type NetworkAllocator
-allocator = sim.create_node(ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
-## Hit Agent's run, from here on scheduled events will be executed
-## if local address is not set at initialiazion or before run, 
-## an exception is raised
-initial_time = time()
-allocator.run()
+def runpp(net):
+    lock.acquire()
+    net_copy = deepcopy(net)
+    lock.release()
 
-#%%
-## Create a corresponding multi-agent deployment to the pandapower network
-net = pn.case6ww()
-nodes = create_nodes(net, allocator.local)
-
-def runpp():
-    while not sim.shutdown:
+    while True:
         try:
             qsize = allocations_queue.qsize()
             # print("runpp: updating {} new allocations".format(qsize))
             for i in range(qsize):
                 timestamp, name, p_kw, q_kw = allocations_queue.get()
                 if timestamp == 0:
-                    break
-                net.load.loc[net.load['name'] == name, 'p_kw'] = p_kw
-                net.load.loc[net.load['name'] == name, 'q_kw'] = q_kw
+                    return
+                net_copy.load.loc[net_copy.load['name'] == name, 'p_kw'] = p_kw
+                net_copy.load.loc[net_copy.load['name'] == name, 'q_kw'] = q_kw
         except Exception as e:
             print(e)
         converged = True
         try:
-            pp.runpp(net, init_vm_pu='results')
+            pp.runpp(net_copy, init_vm_pu='results')
             # print("Finished runpp")
             converged = True
         except Exception as e:
@@ -171,9 +165,9 @@ def runpp():
         # Updating voltage measures for clients and live_plot
         if converged:
             for node in measure_queues:
-                bus_ind = net.load['bus'][net.load['name'] == node].item()
+                bus_ind = net_copy.load['bus'][net.load['name'] == node].item()
                 vm_pu = 0
-                vm_pu = net.res_bus['vm_pu'][bus_ind].item()
+                vm_pu = net_copy.res_bus['vm_pu'][bus_ind].item()
                 try:
                     measure_queues[node].put_nowait(vm_pu)
                 except Full:
@@ -181,51 +175,141 @@ def runpp():
                     measure_queues[node].put(vm_pu)
                 # print("\nVotage at bus {}: {}\n".format(bus_ind, vm_pu))
             try:
-                for row in net.res_bus.iterrows():
-                    plot_values.put([time(), row[0], row[1][0].item()])
+                for row in net_copy.res_bus.iterrows():
+                    if (net_copy.load.loc[net_copy.load['bus']==row[0]]['controllable']==True).any():
+                        plot_values.put_nowait([time(), row[0], row[1][0].item()])
+            except Full:
+                print("plot_values is full")
+                plot_values.get()
+                plot_values.put([time(), row[0], row[1][0].item()])
             except Exception as e:
                 print(e)
 
-#%%
-def live_plot():
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    xs = {}
-    ys = {}
-    for row in net.bus.iterrows():
-        xs[row[0]]=[]
-        ys[row[0]]=[]
-    
-    def animate(i, xs, ys):
-        qsize = plot_values.qsize()
-        for _ in range(qsize):
-            timestamp, bus_id, value = plot_values.get()
-            # Add x and y to lists
-            try:
-                xs[bus_id].append(timestamp-initial_time)
-                ys[bus_id].append(value)
-            except Exception as e:
-                print("Exception when filling xs, ys {}".format(e))    
-            # Limit x and y lists to 20 items
-            xs[bus_id] = xs[bus_id][-20:]
-            ys[bus_id] = ys[bus_id][-20:]
-            # Draw x and y lists
+def optimize_network(net):
+    lock.acquire()
+    net_copy = net
+    lock.release()
+    while True:
+        pp.runopp(net_copy, verbose=False)
         try:
-            ax.clear()
-            for bus_id in xs:
-                ax.plot(xs[bus_id], ys[bus_id], label="bus {}".format(bus_id))
+            c_loads = net_copy.load[net_copy.load['controllable']==True]
         except Exception as e:
-            print("Exception when plotting {}".format(e))
-        # Format plot
-        ax.legend()
-        plt.xticks(rotation=45, ha='right')
-        plt.subplots_adjust(bottom=0.30)
-        plt.title('Voltage value over Time')
-        plt.ylabel('voltage value (p.u.)')
+            print(e)
+        
+        print("optimizing {} nodes".format(len(c_loads.index)))
+        for row in c_loads.iterrows():
+            try:
+                p = net_copy.res_load['p_kw'][row[0]].item()
+                q = net_copy.res_load['q_kvar'][row[0]].item()
+                name = row[1]['name']
+            except Exception as e:
+                print("Error in optimize network: {}".format(e))
+            allocation = Allocation(0, p, q, random.uniform(10, 60))
+            allocator.schedule(allocator.send_allocation, args={'nid':name, 'allocation':allocation})
+        sleep(10)
+#%%
+def live_plot(loads):
+    buses = pd.unique([net.load.loc[net.load['name'] == load, 'bus'].item() for load in loads])
+    fig = plt.figure()
+    ax = {}
+    lines = {}
+    i=1
+    for bus in buses:
+        ax[bus]=plt.subplot(2,2, i)
+        lines[bus] = ax[bus].plot([], [])[0]
+        i=i+1
 
-    ani = animation.FuncAnimation(fig, animate, fargs=(xs, ys), interval=20)
-    plt.show()
+    def init():
+        for bus, a in ax.items():
+            a.set_title('voltage value (p.u.) - bus {}'.format(bus))
+            # a.set_aspect('auto', 'box')
 
+        for i in lines:
+            lines[i].set_data([], [])
+
+        return [line for _, line in lines.items()] + [a for _, ax in ax.items()]
+
+    def data_gen():
+        while True:
+            timestamp={}
+            value={}
+            try:
+                qsize = plot_values.qsize()
+                for _ in range(qsize):
+                    t, b, v = plot_values.get()
+                    if b not in buses:
+                        continue
+                    else:
+                        if b not in value:
+                            timestamp[b]=[]
+                            value[b]=[]
+                        timestamp[b].append(t)
+                        value[b].append(v)
+            except Exception as e:
+                print(e)
+                raise e
+            if timestamp == 0:
+                break
+            yield timestamp, value
+
+    def animate(data):
+        t, v = data
+        artists=[]
+        try:
+            for bus_id in v:
+                t[bus_id]=[x-initial_time for x in t[bus_id]]
+                xmin, xmax = ax[bus_id].get_xlim()
+                ymin, ymax = ax[bus_id].get_ylim()
+                if len(lines[bus_id].get_ydata())==0:
+                    ax[bus_id].set_xlim(max(t[bus_id]), 2*max(t[bus_id]))
+                    ax[bus_id].set_ylim(min(v[bus_id])-0.005, max(v[bus_id])+0.005)
+                    ax[bus_id].relim()
+                    # artists.append(ax[bus_id].get_xaxis())
+                    # artists.append(ax[bus_id].get_yaxis())
+                if max(t[bus_id]) >= xmax:
+                    ax[bus_id].set_xlim(xmin, max(t[bus_id])+1)
+                    ax[bus_id].relim()
+                if max(v[bus_id]) >= ymax-0.005:
+                    ax[bus_id].set_ylim(ymin, max(v[bus_id])+0.005)
+                    ax[bus_id].relim()
+                elif min(v[bus_id]) > ymin + 0.05:
+                    ax[bus_id].set_ylim(min(v[bus_id])-0.005, ymax)
+                    ax[bus_id].relim()
+                if min(v[bus_id]) <= ymin:
+                    ax[bus_id].set_ylim(min(v[bus_id])-0.005, ymax)
+                    ax[bus_id].relim()
+
+                xdata = np.append(lines[bus_id].get_xdata(), t[bus_id])
+                ydata = np.append(lines[bus_id].get_ydata(), v[bus_id])
+                lines[bus_id].set_data(xdata, ydata)
+            
+            artists.append(line for _, line in lines)
+
+        except Exception as e:
+            print("Exception when filling lines {}".format(e))    
+        return artists
+
+    anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
+                               interval=10, blit=False, repeat=False)
+    try:
+        plt.autoscale(True)
+        plt.show()
+    except Exception as e:
+        print(e)
+
+
+#%%
+## Create a local Agent of type NetworkAllocator
+allocator = sim.create_node(ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
+## Hit Agent's run, from here on scheduled events will be executed
+## if local address is not set at initialiazion or before run, 
+## an exception is raised
+initial_time = time()
+allocator.run()
+#%%
+## Create a corresponding multi-agent deployment to the pandapower network
+net = pn.case6ww()
+nodes = create_nodes(net, allocator.local)
 #%%
 print("waiting for Network ready: {}".format(len(nodes)))
 while network_size.qsize() < len(nodes):
@@ -234,14 +318,43 @@ print("Network ready")
 for node in nodes:
     allocation = Allocation(
         0, 
-        net.load[net.load['name']==node.local]['p_kw'].item(), 
-        net.load[net.load['name']==node.local]['q_kvar'].item(), 
+        net.load.loc[net.load['name']==node.local, 'p_kw'].item(), 
+        net.load.loc[net.load['name']==node.local, 'q_kvar'].item(), 
         1)
-    node.handle_allocation(allocation)
+    node.schedule(node.handle_allocation, args={'allocation':allocation})
 
+net.load['min_p_kw'] = None
+net.load['min_q_kvar'] = None
+net.load['max_p_kw'] = None
+net.load['max_q_kvar'] = None
+net.load['controllable'] = False
+
+# c_loads = random.choices([node.local for node in nodes], k=3)
+c_loads =['127.0.0.1:5556', '127.0.0.1:5557', '127.0.0.1:5558']
+for load in c_loads:
+    net.load.loc[net.load['name']==load, 'controllable'] = True
+    net.load.loc[net.load['name']==load, 'min_p_kw'] = -1*net.load.loc[net.load['name']==load, 'p_kw']
+    net.load.loc[net.load['name']==load, 'min_q_kvar'] = -1*net.load.loc[net.load['name']==load, 'q_kvar']
+    net.load.loc[net.load['name']==load, 'max_p_kw'] = net.load.loc[net.load['name']==load, 'p_kw']
+    net.load.loc[net.load['name']==load, 'max_q_kvar'] = net.load.loc[net.load['name']==load, 'q_kvar']
+
+def plot_objs():
+    import objgraph
+    while not sim.shutdown:
+        sleep(30)
+        objgraph.show_growth(limit=3)
+        try:
+            objgraph.show_chain(objgraph.find_backref_chain(random.choice(objgraph.by_type('weakref')), objgraph.is_proper_module), filename='chain.png')
+        except Exception as e:
+            print(e)
+        # obj = objgraph.by_type('list')[1000]
+        # objgraph.show_backrefs(obj, max_depth=10)
+        break
 #%%
 with Executor(max_workers=200) as executor:
-    executor.submit(runpp)
-    live_plot()
+    executor.submit(runpp, net)
+    executor.submit(optimize_network, net)
+    # executor.submit(plot_objs)
+    live_plot(c_loads)
     # executor.submit(monitor_memory, 5)
 
