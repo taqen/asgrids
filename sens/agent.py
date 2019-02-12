@@ -16,13 +16,13 @@ from .async_communication import AsyncCommunication
 
 logger = logging.getLogger('Agent')
 
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
-# logger.setLevel(logging.INFO)
-# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-# ch = logging.StreamHandler()
-# ch.setLevel(logging.INFO)
-# ch.setFormatter(formatter)
-# logger.addHandler(ch)
 
 class ErrorModel(object):
     def __init__(self, rate=1.0, seed=None):

@@ -25,6 +25,7 @@ REQUIRED = [
     'msgpack>=0.6.1', 'simpy>=3.0.11', 'pyzmq>=17.1.2', 'rpyc>=4.0.2', 'matplotlib>=3.0.2', 'numpy>=1.16.1',
     'pandapower>=1.6.0', 'pandas>=0.24.1', 'joblib>=0.13.1', 'plumbum>=1.6.7'
 ]
+TEST_REQUIRED = ['pytest>=4.2.0']
 
 # What packages are optional?
 EXTRAS = {
@@ -113,6 +114,7 @@ setup(
     zip_safe=False,
     install_requires=REQUIRED,
     extras_require=EXTRAS,
+    tests_require=TEST_REQUIRED,
     include_package_data=True,
     license='MIT',
     classifiers=[
@@ -121,6 +123,7 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: Implementation :: CPython',
         'Programming Language :: Python :: Implementation :: PyPy'
