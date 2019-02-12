@@ -126,8 +126,6 @@ class SmartGridSimulation(object):
     """
 
     def stop(self):
-        # for node in self.nodes:
-        #     node.stop()
         for _, node in self.nodes.items():
             node.stop()
         for server in self.remote_servers:

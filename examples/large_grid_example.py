@@ -54,7 +54,6 @@ def monitor_memory(N):
     while i in range(N):
         tracemalloc.start()
         snapshot = tracemalloc.take_snapshot()
-        snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics('traceback')
         stat = top_stats[0]
         print("%s memory blocks: %.1f KiB" % (stat.count, stat.size / 1024))
@@ -89,7 +88,7 @@ def joined_network(src, dst):
     network_size.put(src)
 
 
-## Used localy to load and prepare data
+# Used locally to load and prepare data
 def load_csv(file, columns=None):
     if columns is None:
         columns = list()
@@ -101,7 +100,7 @@ def load_csv(file, columns=None):
     return filtered
 
 
-## This is an example of how to schedule events from a generated timeseries
+# This is an example of how to schedule events from a generated timeseries
 def generate_allocations(node, old_allocation):
     # Scheduling allocations
     try:
@@ -116,8 +115,8 @@ def generate_allocations(node, old_allocation):
 
 
 def allocation_updated(allocation: Allocation, node_addr: str):
-    ## We receive node_addr as "X.X.X.X:YYYY"
-    ## ind also identifies the node in pandapawer loads list
+    # We receive node_addr as "X.X.X.X:YYYY"
+    # ind also identifies the node in pandapawer loads list
     # print("received allocation update")
     allocations_queue.put([time(), node_addr, allocation.p_value, allocation.q_value])
     try:
@@ -128,8 +127,8 @@ def allocation_updated(allocation: Allocation, node_addr: str):
 
 
 def create_nodes(net, remote):
-    ## Create remote agents of type NetworkLoad
-    nodes = []
+    # Create remote agents of type NetworkLoad
+    nodes = list()
     for i in range(len(net.load.index)):
         node = sim.create_node('load', '127.0.0.1:{}'.format(next(port)))
         node.run()
@@ -145,7 +144,7 @@ def create_nodes(net, remote):
     return nodes
 
 
-## Handle ctrl-c interruptin
+# Handle ctrl-c interruptin
 def shutdown(x, y):
     allocations_queue.put([0, 0, 0, 0])
     sim.stop()

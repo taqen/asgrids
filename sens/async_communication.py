@@ -32,7 +32,11 @@ class AsyncCommunication(threading.Thread):
         self._timeout = 1000
         self.running = False
         self._loop = asyncio.new_event_loop()
-        self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix='executor')
+        try:
+            self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix='executor')
+        except TypeError:
+            # Python 3.5
+            self._executor = ThreadPoolExecutor(max_workers=10)
         self._loop.set_default_executor(self._executor)
         asyncio.set_event_loop(self._loop)
         self._context = zmq.asyncio.Context()
