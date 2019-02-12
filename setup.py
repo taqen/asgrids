@@ -9,7 +9,7 @@ import os
 import sys
 from shutil import rmtree
 
-from setuptools import find_packages, setup, Command
+from setuptools import Command, find_packages, setup
 
 # Package meta-data.
 NAME = 'sens'
@@ -17,12 +17,13 @@ DESCRIPTION = 'Smart Electrical Networks Simulator'
 URL = 'https://github.com/takienn/sens'
 EMAIL = 'takai.ken@gmail.com'
 AUTHOR = 'Takai Eddine Kennouche'
-REQUIRES_PYTHON = '>=3.6.0'
+REQUIRES_PYTHON = '>=3.5.3'
 VERSION = 0
 
 # What packages are required for this module to be executed?
 REQUIRED = [
-    'msgpack', 'simpy', 'zmq'
+    'msgpack>=0.6.1', 'simpy>=3.0.11', 'pyzmq>=17.1.2', 'rpyc>=4.0.2', 'matplotlib>=3.0.2', 'numpy>=1.16.1',
+    'pandapower>=1.6.0', 'pandas>=0.24.1', 'joblib>=0.13.1'
 ]
 
 # What packages are optional?
@@ -87,7 +88,7 @@ class UploadCommand(Command):
         self.status('Pushing git tags…')
         os.system('git tag v{0}'.format(about['__version__']))
         os.system('git push --tags')
-        
+
         sys.exit()
 
 
