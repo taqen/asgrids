@@ -1,25 +1,29 @@
-from rpyc.utils.zerodeploy import DeployedServer
-import rpyc
-from rpyc.utils.helpers import BgServingThread
-from rpyc.utils.classic import teleport_function, deliver
-from plumbum import SshMachine, local
-from plumbum.path.utils import copy
-import typing
-import sens
-from sens import NetworkAllocator, NetworkLoad
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 
 """
 This defines a smart grid simulation environment
-It handles deployement/execution of local and remote nodes
+It handles deployment/execution of local and remote nodes
 """
-class SmartGridSimulation:
+
+import rpyc
+from plumbum import SshMachine
+from rpyc.utils.classic import deliver, teleport_function
+from rpyc.utils.helpers import BgServingThread
+from rpyc.utils.zerodeploy import DeployedServer
+
+from .network_allocator import NetworkAllocator
+from .network_load import NetworkLoad
+
+
+class SmartGridSimulation(object):
     def __init__(self):
-        self.nodes = {}
-        self.conns = {}
-        self.remote_machines = []
-        self.remote_servers = []
-        self.server_threads = []
+        self.nodes = dict()
+        self.conns = dict()
+        self.remote_machines = list()
+        self.remote_servers = list()
+        self.server_threads = list()
 
         # provide rpyc's deliver as a local function
         # This function allows deliver objects to remote machines
@@ -36,13 +40,14 @@ class SmartGridSimulation:
     """
     Make sure 'sens' library is available remotely
     """
-    def check_remote(self, remote_server, python_pkg_path="/home/ubuntu/.local/lib/python3.6/site-packages/"):
+
+    @staticmethod
+    def check_remote(remote_server, python_pkg_path="/home/ubuntu/.local/lib/python3.6/site-packages/"):
         conn = remote_server.classic_connect()
         import os
-        rpyc.classic.upload_package(
-            conn,
-            sens,
-            os.path.join(python_pkg_path, "sens"))
+        import sens
+
+        rpyc.classic.upload_package(conn, sens, os.path.join(python_pkg_path, "sens"))
         return False
 
     """
@@ -50,7 +55,10 @@ class SmartGridSimulation:
     Returns a rpyc object wrapper, that enables handling the remote object
     as if it was created locally.
     """
-    def create_remote_node(self, hostname, username, keyfile, ntype, addr, config={}):
+
+    def create_remote_node(self, hostname, username, keyfile, ntype, addr, config=None):
+        if config is None:
+            config = dict()
         remote_machine = SshMachine(host=hostname, user=username, keyfile=keyfile)
         remote_server = DeployedServer(remote_machine)
         # if `sens` wasn't available remotely, now we installed it
@@ -65,12 +73,11 @@ class SmartGridSimulation:
         conn = remote_server.classic_connect()
         serving_thread = BgServingThread(conn)
         self.server_threads.append(serving_thread)
-        self.conns[addr]=conn
-        node = None
+        self.conns[addr] = conn
 
-        ## Using execute/eval allows working on a remote single namespace
-        ## useful when teleporting functions that need using remote object names
-        ## as using conn.modules create a locate but not a remote namespace member
+        # Using execute/eval allows working on a remote single namespace
+        # useful when teleporting functions that need using remote object names
+        # as using conn.modules create a locate but not a remote namespace member
         if ntype is 'load':
             conn.execute("from sens import NetworkLoad")
             conn.execute("node=NetworkLoad()")
@@ -82,15 +89,15 @@ class SmartGridSimulation:
             node = conn.namespace['node']
         else:
             raise ValueError("Can't handle ntype == {}".format(ntype))
-        self.nodes[addr]=node
+        self.nodes[addr] = node
 
-        ## Return node netref object and rpyc connection
+        # Return node netref object and rpyc connection
         return node, conn
-
 
     """
     Creates a local node
     """
+
     def create_node(self, ntype, addr):
         if ntype is 'load':
             node = NetworkLoad()
@@ -102,9 +109,11 @@ class SmartGridSimulation:
             node.local = addr
             self.nodes[addr] = node
             return node
+
     """
     Runs the created remote objects
     """
+
     def run(self):
         for node in self.nodes:
             node.run()
@@ -115,15 +124,14 @@ class SmartGridSimulation:
     """
     Stops the remotely created nodes
     """
+
     def stop(self):
-        # for node in self.nodes:
-        #     node.stop()
         for _, node in self.nodes.items():
             node.stop()
         for server in self.remote_servers:
             server.close()
-        self.node = {}
-        self.remote_machines = []
-        self.remote_servers = []
-        self.server_threads = []
+        self.nodes = dict()
+        self.remote_machines = list()
+        self.remote_servers = list()
+        self.server_threads = list()
         self.shutdown = True

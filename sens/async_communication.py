@@ -1,15 +1,20 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import asyncio
 import logging
 import threading
-from random import Random
+from concurrent.futures import ThreadPoolExecutor
 
+import msgpack
 import zmq
 import zmq.asyncio
-from concurrent.futures import ThreadPoolExecutor
-import msgpack
+
 from .defs import ext_pack, ext_unpack
 
 logger = logging.getLogger('AsyncCommThread')
+
+
 # logger.setLevel(logging.DEBUG)
 # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 # ch = logging.StreamHandler()
@@ -18,7 +23,7 @@ logger = logging.getLogger('AsyncCommThread')
 # logger.addHandler(ch)
 
 class AsyncCommunication(threading.Thread):
-    def __init__(self, local_address = None, callback=None, identity=None):
+    def __init__(self, local_address=None, callback=None, identity=None):
 
         self._receive_callback = None
         self._identity = identity
@@ -27,8 +32,11 @@ class AsyncCommunication(threading.Thread):
         self._timeout = 1000
         self.running = False
         self._loop = asyncio.new_event_loop()
-        self._executor = ThreadPoolExecutor(max_workers=10,
-                                           thread_name_prefix='executor')
+        try:
+            self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix='executor')
+        except TypeError:
+            # Python 3.5
+            self._executor = ThreadPoolExecutor(max_workers=10)
         self._loop.set_default_executor(self._executor)
         asyncio.set_event_loop(self._loop)
         self._context = zmq.asyncio.Context()
@@ -38,11 +46,10 @@ class AsyncCommunication(threading.Thread):
         if identity:
             name = name + identity
         threading.Thread.__init__(self, name=name)
+
     def run(self):
         self.running = True
-        server_future = asyncio.ensure_future(
-            self._run_server(),
-            loop=self._loop)
+        server_future = asyncio.ensure_future(self._run_server(), loop=self._loop)
         try:
             self._loop.run_until_complete(server_future)
         finally:
@@ -97,13 +104,11 @@ class AsyncCommunication(threading.Thread):
                 _, msg = await self._server.recv_multipart()
                 try:
                     p = msgpack.unpackb(msg, ext_hook=ext_unpack, encoding='utf-8')
-                    #ident = msgpack.unpackb(ident, encoding='utf-8')
+                    # ident = msgpack.unpackb(ident, encoding='utf-8')
                 except Exception as e:
                     raise e
                 logger.debug('server received {}'.format(p))
-                await self._loop.run_in_executor(self._executor,
-                                                self._callback,
-                                                p)
+                await self._loop.run_in_executor(self._executor, self._callback, p)
         logger.info("stopping server")
         self._poller.unregister(self._server)
         self._server.close()
