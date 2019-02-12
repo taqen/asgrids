@@ -1,6 +1,9 @@
-from .defs import Packet, Allocation, EventId
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 from .agent import Agent
-from .async_communication import AsyncCommunication
+from .defs import EventId, Packet
+
 
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
@@ -14,7 +17,7 @@ class NetworkAllocator(Agent):
         self.identity = self.nid
         self.type = "NetworkAllocator"
         self.alloc_timeouts = {}
-        ## various callbacks
+        # various callbacks
         self.allocation_updated = None
 
     def receive_handle(self, p: Packet, src=None):
@@ -41,7 +44,7 @@ class NetworkAllocator(Agent):
             eid = EventId(p)
             self.alloc_timeouts[p.src].interrupt()
         elif msg_type == 'leave':
-            self.schedule(self.remove_node, {'nid':p.src})
+            self.schedule(self.remove_node, {'nid': p.src})
         if msg_type == 'stop':
             self.schedule(self.stop_network)
         if msg_type == 'stop_ack':
@@ -91,7 +94,7 @@ class NetworkAllocator(Agent):
     def send_allocation(self, nid, allocation):
         """ Send an allocation to a Network's node
 
-        :paramnid: id of destination node
+        :param nid: id of destination node
         :param allocation: allocation to be sent
         :returns:
         :rtype:
@@ -103,16 +106,14 @@ class NetworkAllocator(Agent):
         # Creating Event that is triggered if no ack is received before a timeout
         eid = EventId(allocation, nid)
         self.alloc_timeouts[nid] = self.create_timeout(
-                                                eid=eid,
-                                                timeout=self.alloc_ack_timeout,
-                                                msg='no ack from {} for allocation {}'.format(
-                                                nid, allocation.aid))
+            eid=eid, timeout=self.alloc_ack_timeout,
+            msg='no ack from {} for allocation {}'.format(nid,allocation.aid))
         self.send(packet, remote=nid)
 
     def send_join_ack(self, dst):
         """ Acknowledge a network node has joing the network (added to known nodes list)
 
-        :param dst: destination of acknowledgemnt, should be the same node who requested joining.
+        :param dst: destination of acknowledgement, should be the same node who requested joining.
         :returns:
         :rtype:
 
@@ -136,10 +137,7 @@ class NetworkAllocator(Agent):
             self.send(packet, remote=node)
             self.logger.info("Sent stop to {}".format(node))
             eid = EventId(packet, node)
-            self.create_timer(
-                timeout=self.stop_ack_timeout,
-                msg="no stop_ack from {}".format(node),
-                eid=eid)
+            self.create_timer(timeout=self.stop_ack_timeout, msg="no stop_ack from {}".format(node), eid=eid)
             self.logger.info("Stopping {}".format(node))
 
         while True:

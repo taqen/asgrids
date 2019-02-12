@@ -1,8 +1,11 @@
-from .defs import Packet, Allocation, EventId
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from typing import Callable
+
 from .agent import Agent
-from .async_communication import AsyncCommunication
-import simpy
-import typing
+from .defs import Allocation, Packet
+
 
 class NetworkLoad(Agent):
     def __init__(self, local=None, remote=None, env=None):
@@ -17,11 +20,11 @@ class NetworkLoad(Agent):
         # storage for current electrical measures
         self.curr_measure = 0
         # callback to call when reporting allocation, to get current electrical measures.
-        self.update_measure :Callable = None
+        self.update_measure = None  # type:Callable
         # callback to call when node received join_ack
-        self.joined_callback :Callable = None
+        self.joined_callback = None  # type:Callable
         # callback to generate allocation values for this NetworkLoad
-        self.generate_allocations :Callable = None
+        self.generate_allocations = None  # type:Callable
         # Event that will trigger handle_allocation for next value
         self.next_allocation = None
 
@@ -54,15 +57,9 @@ class NetworkLoad(Agent):
 
             allocation = p.payload
             self.logger.debug("allocation={}".format(allocation))
-            self.schedule(
-                action=self.send_ack,
-                args={
-                    'allocation': allocation,
-                    'dst': p.src
-                })
-            self.schedule(
-                action=self.handle_allocation,
-                args={'allocation': allocation})
+            self.schedule(action=self.send_ack,
+                          args={'allocation': allocation, 'dst': p.src})
+            self.schedule(action=self.handle_allocation, args={'allocation': allocation})
 
         if msg_type == 'stop':
             self.logger.info("Received Stop from {}".format(p.src))
@@ -77,27 +74,19 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.logger.info(
-            "{} - Current allocation value is {}".format(
-            self.local,
-            self.curr_allocation)
-            )
+        self.logger.info("{} - Current allocation value is {}".format(self.local, self.curr_allocation))
 
         self.curr_allocation = allocation
 
-        self.logger.info(
-            "{} - New allocation value is {}".format(
-            self.local,
-            self.curr_allocation)
-            )
+        self.logger.info("{} - New allocation value is {}".format(self.local, self.curr_allocation))
         self.schedule(self.report_allocation)
 
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
             self.next_allocation = self.schedule(
-                                        self.handle_allocation,
-                                        {'allocation':self.generate_allocations(self.local, self.curr_allocation)},
-                                        delay=self.curr_allocation.duration)
+                self.handle_allocation,
+                {'allocation': self.generate_allocations(self.local, self.curr_allocation)},
+                delay=self.curr_allocation.duration)
 
     def report_allocation(self):
         if self.remote is not None:
@@ -139,7 +128,7 @@ class NetworkLoad(Agent):
 
     def send_leave(self, dst):
         self.logger.info("Leaving {}".format(dst))
-    
+
         packet = Packet(ptype='leave', src=self.local)
 
         self.send(packet, dst)

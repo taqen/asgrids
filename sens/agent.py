@@ -1,19 +1,22 @@
-from abc import abstractmethod
-from sys import int_info
-import hashlib
-from simpy.core import Environment, NORMAL, Infinity
-import simpy
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import logging
+import queue
+import time
+from abc import ABCMeta
 from heapq import heappush
 from random import Random
-
-from .async_communication import AsyncCommunication
-from .defs import Packet, Allocation, EventId
-import logging
-import time
-import queue
 from threading import Thread
 
+import simpy
+from simpy.core import Environment, Infinity, NORMAL
+
+from .async_communication import AsyncCommunication
+
 logger = logging.getLogger('Agent')
+
+
 # logger.setLevel(logging.INFO)
 # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 # ch = logging.StreamHandler()
@@ -21,13 +24,14 @@ logger = logging.getLogger('Agent')
 # ch.setFormatter(formatter)
 # logger.addHandler(ch)
 
-class ErrorModel():
+class ErrorModel(object):
     def __init__(self, rate=1.0, seed=None):
         self.rate = rate
         self.ran = Random(seed)
 
     def corrupt(self, packet):
         return self.ran.random() >= self.rate
+
 
 class AgentEnvironment(Environment):
     def schedule(self, event, priority=NORMAL, delay=0):
@@ -38,18 +42,19 @@ class AgentEnvironment(Environment):
         heappush(self._queue,
                  (time.time() + delay, priority, next(self._eid), event))
 
+
 # A generic Network Agent.
-class Agent():
+class Agent(object, metaclass=ABCMeta):
     def __init__(self, env=None):
         """ Make sure a simulation environment is present and Agent is running.
 
         :param env: a simpy simulation environment
         """
-        self.env = None
+        self.env = env
         self.nid = None
         self.type = None
         self.tasks = queue.Queue()
-        self.timeouts = {}
+        self.timeouts = dict()
         self._local = None
         self.comm = AsyncCommunication()
         self.comm._callback = self.receive
@@ -108,7 +113,7 @@ class Agent():
                 self.env.step()
                 continue
             try:
-                func = self.tasks.get(timeout = None if delay == Infinity else delay)
+                func = self.tasks.get(timeout=None if delay == Infinity else delay)
             except queue.Empty:
                 continue
             if not func:
@@ -119,7 +124,7 @@ class Agent():
             except Exception as e:
                 raise RuntimeError(e)
 
-    def schedule(self, action, args=None, delay=0, value=None, callbacks=[]):
+    def schedule(self, action, args=None, delay=0, value=None, callbacks=None):
         """
         The agent's schedule function.
         First it creates a simpy events, that will then execute the action
@@ -133,6 +138,8 @@ class Agent():
         :rtype:
 
         """
+        if callbacks is None:
+            callbacks = list()
         self.logger.debug("scheduling action {} at {}".format(action, time.time()))
         event = self.env.event()
         event._ok = True
@@ -140,14 +147,11 @@ class Agent():
         event.callbacks.append(
             lambda e: self.logger.debug("executing action{}".format(action)))
         if args is None:
-            event.callbacks.append(
-                lambda e: action())
+            event.callbacks.append(lambda e: action())
         elif isinstance(args, dict):
-            event.callbacks.append(
-                lambda e: action(**args))
+            event.callbacks.append(lambda e: action(**args))
         elif isinstance(args, list):
-            event.callbacks.append(
-                lambda e: action(**args))
+            event.callbacks.append(lambda e: action(**args))
         for callback in callbacks:
             event.callbacks.append(lambda e: callback())
 
@@ -158,7 +162,7 @@ class Agent():
         """ stop the Agent by interrupted the loop"""
 
         self.logger.debug("interrupting pending timeouts")
-        for _,v in self.timeouts.items():
+        for _, v in self.timeouts.items():
             if not v.processed and not v.triggered:
                 v.interrupt()
         if len(self.timeouts) > 0:
@@ -174,6 +178,7 @@ class Agent():
         A timer will clear itself from Agents timeouts list after expiration.
         """
         self.logger.debug("creating timer {} for {}s".format(eid, timeout))
+
         def event_process():
             try:
                 yield self.env.timeout(timeout, value=eid)
@@ -181,7 +186,8 @@ class Agent():
                 # self.logger.warning("event_process interrupted for eid {}".format(eid))
                 return
             self.logger.warning("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
-            self.schedule(self.remove_timeout, args={'eid':eid})
+            self.schedule(self.remove_timeout, args={'eid': eid})
+
         event = self.env.process(event_process())
         return event
         # self.timeouts[eid] = event
@@ -193,21 +199,21 @@ class Agent():
         self.logger.debug("canceling timer {}".format(eid))
         e = self.timeouts.pop(eid, None)
         if e is None:
-            self.logger.warning("remote_timeout, no eid %s"%eid)
+            self.logger.warning("remote_timeout, no eid %s" % eid)
             return
         # if e is not None and not (e.processed or e.triggered):
         try:
             e.interrupt()
             self.logger.debug("canceled timer {} at {}".format(eid, self.env.now))
         except Exception as e:
-            self.logger.warning("remote_timeout, couldn't interrupt timeout {} \n {}".format(eid,e))
+            self.logger.warning("remote_timeout, couldn't interrupt timeout {} \n {}".format(eid, e))
 
     def send(self, packet, remote):
         if isinstance(self._error_model, ErrorModel):
             if not self._error_model.corrupt(packet):
                 self.comm.send(packet, remote)
             else:
-                self.logger.info("packet error occured at Agent.send")
+                self.logger.info("packet error occurred at Agent.send")
         else:
             self.comm.send(packet, remote)
 
@@ -217,7 +223,7 @@ class Agent():
             if not self._error_model.corrupt(packet):
                 self.receive_handle(packet, src)
             else:
-                self.logger.info("packet error occured at Agent.receive")
+                self.logger.info("packet error occurred at Agent.receive")
         else:
             self.receive_handle(packet, src)
 

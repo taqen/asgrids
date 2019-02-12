@@ -1,15 +1,17 @@
-# from sins import NetworkAllocator, NetworkLoad
-from sens import NetworkAllocator, NetworkLoad, Allocation
-from concurrent.futures import ThreadPoolExecutor as Executor
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import csv
 import logging
 import signal
-from time import sleep
+from concurrent.futures import ThreadPoolExecutor as Executor
 from random import random
-from itertools import dropwhile
-import pandapower as pp
-import numpy as np
-import csv
+from time import sleep
 
+import numpy as np
+import pandapower as pp
+
+from sens import Allocation, NetworkAllocator, NetworkLoad
 
 logger = logging.getLogger('ElectricalSimulation')
 logger.setLevel(logging.INFO)
@@ -19,9 +21,11 @@ ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-class ElectricalSimulator:
+
+class ElectricalSimulator(object):
     """ Simulate a communicating policy allocator
     """
+
     def __init__(self):
         self.net = net
         self.loads = {}
@@ -40,8 +44,8 @@ class ElectricalSimulator:
             except Exception as ex:
                 raise ex
         elif self.running:
-            logger.info("Allocator not initialized")           
-        
+            logger.info("Allocator not initialized")
+
         if self.running:
             self.stop()
         else:
@@ -53,7 +57,6 @@ class ElectricalSimulator:
         self.executor.shutdown()
         print("ThreadPoolExecutor finished shutdown")
         self.allocator = None
-
 
     def create_allocator(self):
         self.allocator = NetworkAllocator(local='127.0.0.1:5555')
@@ -67,13 +70,13 @@ class ElectricalSimulator:
             self.allocation_id[l] = 0
             self.loads[l].curr_allocation = Allocation(0, self.net.load['p_kw'][l].item(), 0)
             self.loads[l].run()
-    
+
     def connect_network(self):
         for l in self.loads:
             logger.info("---------------------------Connecting {}-------------------------".format(self.loads[l].nid))
             self.loads[l].schedule(action=self.loads[l].send_join,
-                    args={'dst':self.allocator.local})
-    
+                                   args={'dst': self.allocator.local})
+
     def optimize_pf(self):
         if self.running:
             pp.runopp(self.net, verbose=True)
@@ -92,10 +95,10 @@ class ElectricalSimulator:
                 allocation = Allocation(self.allocation_id[l], allocation_value, 0)
                 self.allocation_id[l] += 1
                 self.allocator.schedule(
-                    action=self.allocator.send_allocation, 
-                    args={'nid':self.loads[l].nid, 'allocation':allocation})
+                    action=self.allocator.send_allocation,
+                    args={'nid': self.loads[l].nid, 'allocation': allocation})
 
-    def collect(self): 
+    def collect(self):
         if not self.running:
             logger.info("ElectricalSimulator not running")
             return
@@ -107,6 +110,7 @@ class ElectricalSimulator:
                 self.net.load['p_kw'][l] = v
             except KeyError as k:
                 logger.error("node {} didn't join allocator yet".format(k))
+
 
 net = pp.create_empty_network()
 # create buses
@@ -128,18 +132,18 @@ line = [
 
 # create generators
 eg = pp.create_ext_grid(
-    net, bus[1], min_p_kw=-1e9, 
+    net, bus[1], min_p_kw=-1e9,
     max_p_kw=1e9
-    )
+)
 gen = [
     pp.create_gen(
-        net, bus[2], p_kw=-80 * 1e3, 
-        min_p_kw=-80e3, max_p_kw=0, vm_pu=1.01, 
+        net, bus[2], p_kw=-80 * 1e3,
+        min_p_kw=-80e3, max_p_kw=0, vm_pu=1.01,
         controllable=True
     ),
     pp.create_gen(
-        net, bus[3], p_kw=-100 * 1e3, 
-        min_p_kw=-100e3, max_p_kw=0, vm_pu=1.01, 
+        net, bus[3], p_kw=-100 * 1e3,
+        min_p_kw=-100e3, max_p_kw=0, vm_pu=1.01,
         controllable=True
     )]
 
@@ -168,43 +172,44 @@ elec.connect_network()
 
 
 # Allocation generators
-## Random behavior
+# Random behavior
 def random_alloc(load):
     assert isinstance(elec, ElectricalSimulator)
     while elec.running:
         print("************************************************************************************************")
         v = random() * 1.0e5
         allocation = Allocation(0, v, 0)
-        event = load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=3)
+        event = load.schedule(action=load.allocation_handle, args={'allocation': allocation}, time=3)
         event.callbacks.append(lambda e: load.allocation_report())
         # load.schedule(action=load.allocation_report)
         sleep(1)
 
-## Table read
+
+# Table read
 def load_csv(load, file):
     assert isinstance(elec, ElectricalSimulator)
-    # Data prepation
+    # Data preparation
     loads = []
     with open(file, newline='') as csvfile:
         reader = csv.reader(csvfile, delimiter=',')
         for row in reader:
-            if row[0] != 'timedelta' and float(row[1]) != 0 :
-                loads.append([float(row[0]), float(row[1])*1e3])
-        
+            if row[0] != 'timedelta' and float(row[1]) != 0:
+                loads.append([float(row[0]), float(row[1]) * 1e3])
+
         for i in range(0, len(loads)):
-            loads[i][0] = i+1
+            loads[i][0] = i + 1
     # Scheduling allocation
     while elec.running and len(loads) > 0:
         if load.running:
             v = loads.pop(0)
             allocation = Allocation(0, v[1], 0)
-            event = load.schedule(action=load.allocation_handle, args={'allocation':allocation}, time=v[0])
+            event = load.schedule(action=load.allocation_handle, args={'allocation': allocation}, time=v[0])
             event.callbacks.append(lambda e: load.allocation_report(time=v[0]))
         else:
             logger.info("node {} stopped".format(load.nid))
 
 
-## main loop
+# Main loop
 def opf_loop():
     assert isinstance(elec, ElectricalSimulator)
     while elec.running:
@@ -212,10 +217,11 @@ def opf_loop():
         elec.optimize_pf()
         logger.info('OPF loads result\n{}'.format(elec.net.res_load))
         logger.info('OPF generators result\n{}'.format(elec.net.res_gen))
-        elec.broadcast()        
+        elec.broadcast()
         sleep(5)
         elec.collect()
         logger.info('\n{}'.format(elec.net.load))
+
 
 elec.executor.submit(opf_loop)
 elec.executor.submit(random_alloc, elec.loads[1])
