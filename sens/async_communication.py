@@ -49,9 +49,7 @@ class AsyncCommunication(threading.Thread):
 
     def run(self):
         self.running = True
-        server_future = asyncio.ensure_future(
-            self._run_server(),
-            loop=self._loop)
+        server_future = asyncio.ensure_future(self._run_server(), loop=self._loop)
         try:
             self._loop.run_until_complete(server_future)
         finally:

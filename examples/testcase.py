@@ -28,9 +28,9 @@ class ElectricalSimulator(object):
 
     def __init__(self):
         self.net = net
-        self.loads = {}
+        self.loads = dict()
         self.executor = Executor(max_workers=10)
-        self.allocation_id = {}
+        self.allocation_id = dict()
         self.running = True
         self.allocator = None
         # handler = lambda signum, frame: self.stop()
@@ -63,7 +63,7 @@ class ElectricalSimulator(object):
         self.allocator.run()
 
     def create_network(self, net):
-        assert net != None and hasattr(net, 'load') and len(net.load) > 0
+        assert net is not None and hasattr(net, 'load') and len(net.load) > 0
         self.net = net
         for l in list(self.net.load.index):
             self.loads[l] = NetworkLoad(local='127.0.0.1:500{}'.format(l))
@@ -74,8 +74,7 @@ class ElectricalSimulator(object):
     def connect_network(self):
         for l in self.loads:
             logger.info("---------------------------Connecting {}-------------------------".format(self.loads[l].nid))
-            self.loads[l].schedule(action=self.loads[l].send_join,
-                                   args={'dst': self.allocator.local})
+            self.loads[l].schedule(action=self.loads[l].send_join, args={'dst': self.allocator.local})
 
     def optimize_pf(self):
         if self.running:
@@ -89,14 +88,13 @@ class ElectricalSimulator(object):
             return
         logger.info("Broadcasting OPF results")
         for l in self.loads:
-            if self.net.load['controllable'][l].item() == True:
+            if self.net.load['controllable'][l].item():
                 print("Broadcasting to load {}".format(self.loads[l].local))
                 allocation_value = self.net.res_load['p_kw'][l].item()
                 allocation = Allocation(self.allocation_id[l], allocation_value, 0)
                 self.allocation_id[l] += 1
-                self.allocator.schedule(
-                    action=self.allocator.send_allocation,
-                    args={'nid': self.loads[l].nid, 'allocation': allocation})
+                self.allocator.schedule(action=self.allocator.send_allocation,
+                                        args={'nid': self.loads[l].nid, 'allocation': allocation})
 
     def collect(self):
         if not self.running:
@@ -189,7 +187,7 @@ def random_alloc(load):
 def load_csv(load, file):
     assert isinstance(elec, ElectricalSimulator)
     # Data preparation
-    loads = []
+    loads = list()
     with open(file, newline='') as csvfile:
         reader = csv.reader(csvfile, delimiter=',')
         for row in reader:

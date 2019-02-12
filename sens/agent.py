@@ -144,14 +144,13 @@ class Agent(object, metaclass=ABCMeta):
         event = self.env.event()
         event._ok = True
         event._value = value
-        event.callbacks.append(
-            lambda e: self.logger.debug("executing action{}".format(action)))
+        event.callbacks.append(lambda e: self.logger.debug("executing action{}".format(action)))
         if args is None:
             event.callbacks.append(lambda e: action())
         elif isinstance(args, dict):
             event.callbacks.append(lambda e: action(**args))
         elif isinstance(args, list):
-            event.callbacks.append(lambda e: action(**args))
+            event.callbacks.append(lambda e: action(*args))
         for callback in callbacks:
             event.callbacks.append(lambda e: callback())
 
@@ -174,7 +173,7 @@ class Agent(object, metaclass=ABCMeta):
 
     def create_timeout(self, timeout, eid, msg=''):
         """
-        Creating a timer using simpy's timeout.
+        Creating a timout using simpy's timeout.
         A timer will clear itself from Agents timeouts list after expiration.
         """
         self.logger.debug("creating timer {} for {}s".format(eid, timeout))

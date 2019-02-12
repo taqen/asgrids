@@ -25,8 +25,8 @@ def func(node, loads):
     # Scheduling allocation
     for v in loads:
         allocation = Allocation(0, v[1], v[2])
-        node.schedule(action=node.handle_allocation, args={'allocation': allocation}, delay=v[0],
-                      callbacks=[node.report_allocation])
+
+        node.schedule(action=node.handle_allocation, args={'allocation': allocation}, delay=v[0])
 
 
 # Create SmartGridSimulation environment
@@ -34,9 +34,8 @@ sim = SmartGridSimulation()
 
 signal.signal(signal.SIGINT, lambda x, y: sim.stop())
 
-# Create a local Agent of type NetworkAllocator providing its address
+# Create a local Agent of type NetworkAllocator, addr will be in the simulated network
 allocator = sim.create_node(ntype='allocator', addr="127.0.0.1:5555")
-
 # Hit Agent's run, from here on scheduled events will be executed
 allocator.run()
 
