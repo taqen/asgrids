@@ -1,7 +1,7 @@
 from queue import Queue, Full, Empty
 from threading import Lock
 from time import time, sleep
-from sens import SmartGridSimulation, Allocation
+from sens import SmartGridSimulation, Allocation, live_plot
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp
@@ -133,7 +133,7 @@ def create_nodes(net, remote):
     return nodes
 
 
-def runpp():
+def runpp(initial_time=0):
     lock.acquire()
     net_copy = deepcopy(net)
     lock.release()
@@ -174,7 +174,7 @@ def runpp():
                 for row in net_copy.res_bus.iterrows():
                     if (net_copy.load.loc[net_copy.load['bus'] == row[0]]['controllable'] == True).any():
                         plot_values.put_nowait(
-                            [time(), row[0], row[1][0].item()])
+                            [time()-initial_time, row[0], row[1][0].item()])
             except Full:
                 print("plot_values is full")
                 plot_values.get()
@@ -183,133 +183,34 @@ def runpp():
                 print(e)
 
 
-def live_plot(buses):
-    fig = plt.figure()
-    ax = {}
-    lines = {}
-    min_lines = {}
-    max_lines = {}
-    from math import ceil, sqrt
-    grid_dim = ceil(sqrt(len(buses)))
-    i = 1
-    for bus in buses:
-        ax[bus] = plt.subplot(grid_dim, grid_dim, i)
-        lines[bus] = ax[bus].plot([], [])[0]
-        min_lines[bus] = ax[bus].plot([], [], color='red')[0]
-        max_lines[bus] = ax[bus].plot([], [], color='red')[0]
-        i = i + 1
-    plt.subplots_adjust(hspace=0.7, bottom=0.2)
-
-    def init():
+def optimize_network(net):
+    lock.acquire()
+    net_copy = net
+    lock.release()
+    from sens import PIController
+    controller = PIController()
+    while True:
         try:
-            for bus, a in ax.items():
-                min_value = 0.95
-                max_value = 1.05
-                a.set_title('voltage value (p.u.) - bus {}'.format(bus))
-                a.set_ylim([min_value*0.99, max_value*1.01])
-
-                lines[bus].set_data([], [])
-                min_lines[bus].set_data([0], [min_value])
-                max_lines[bus].set_data([0], [max_value])
+            c_loads = net_copy.load[net_copy.load['controllable'] == True]
         except Exception as e:
-            print("Error at live_plot init {}".format(e))
+            print(e)
+        voltages = []
+        for b in c_loads['bus']:
+            voltages = voltages + [net_copy.res_bus['vm_pu'][b]]
+        _, pv_a = controller.generate_allocations([], c_loads[''])
 
-        artists = [line for _, line in lines.items()]
-        artists = artists + [line for _, line in min_lines.items()]
-        artists = artists + [line for _, line in max_lines.items()]
-        artists = artists + [a for _, ax in ax.items()]
-
-        return artists
-
-    def data_gen():
-        while True:
-            timestamp = {}
-            value = {}
+        print("optimizing {} nodes".format(len(c_loads.index)))
+        for row in c_loads.iterrows():
             try:
-                qsize = plot_values.qsize()
-                for _ in range(qsize):
-                    t, b, v = plot_values.get()
-                    if b not in buses:
-                        continue
-                    else:
-                        if b not in value:
-                            timestamp[b] = []
-                            value[b] = []
-                        timestamp[b].append(t)
-                        value[b].append(v)
+                p = net_copy.res_load['p_kw'][row[0]].item()
+                q = net_copy.res_load['q_kvar'][row[0]].item()
+                name = row[1]['name']
             except Exception as e:
-                print(e)
-                raise e
-            if timestamp == 0:
-                break
-            yield timestamp, value
-
-    def animate(data):
-        t, v = data
-        artists = []
-        try:
-            for bus_id in v:
-                t[bus_id] = [x - initial_time for x in t[bus_id]]
-                xmin, xmax = ax[bus_id].get_xlim()
-                ymin, ymax = ax[bus_id].get_ylim()
-                if len(lines[bus_id].get_ydata()) == 0:
-                    ax[bus_id].set_xlim(max(t[bus_id]), 2 * max(t[bus_id]))
-                    # ax[bus_id].set_ylim(min(v[bus_id]) - 0.005, max(v[bus_id]) + 0.005)
-                    ax[bus_id].relim()
-                if max(t[bus_id]) >= xmax:
-                    ax[bus_id].set_xlim(xmin, max(t[bus_id]) + 1)
-                    ax[bus_id].relim()
-                if max(v[bus_id]) >= ymax:
-                    ax[bus_id].set_ylim(ymin, max(v[bus_id]) + 0.005)
-                    ax[bus_id].relim()
-                # elif min(v[bus_id]) > ymin + 0.05:
-                #     ax[bus_id].set_ylim(min(v[bus_id]) - 0.005, ymax)
-                #     ax[bus_id].relim()
-                if min(v[bus_id]) <= ymin:
-                    ax[bus_id].set_ylim(min(v[bus_id]) - 0.005, ymax)
-                    ax[bus_id].relim()
-
-                xdata = np.append(lines[bus_id].get_xdata(), t[bus_id])
-                ydata = np.append(lines[bus_id].get_ydata(), v[bus_id])
-                if len(xdata) > 200:
-                    xdata = xdata[100:]
-                    ydata = ydata[100:]
-                lines[bus_id].set_data(xdata, ydata)
-
-                xdata = min_lines[bus_id].get_xdata()
-                ydata = min_lines[bus_id].get_ydata()
-                if len(xdata) > 200:
-                    xdata = xdata[100:]
-                    ydata = ydata[100:]
-                    ax[bus_id].set_xlim(min(xdata), xmax)
-
-                min_lines[bus_id].set_data(np.append(xdata, t[bus_id]), np.append(
-                    ydata, [ydata[0]]*len(t[bus_id])))
-
-                xdata = max_lines[bus_id].get_xdata()
-                ydata = max_lines[bus_id].get_ydata()
-                if len(xdata) > 200:
-                    xdata = xdata[100:]
-                    ydata = ydata[100:]
-                max_lines[bus_id].set_data(np.append(xdata, t[bus_id]), np.append(
-                    ydata, [ydata[0]]*len(t[bus_id])))
-
-            artists = artists + [line for _, line in lines.items()]
-            artists = artists + [line for _, line in max_lines.items()]
-            artists = artists + [line for _, line in min_lines.items()]
-            artists = artists + [a for _, a in ax.items()]
-        except Exception as e:
-            print("Exception when filling lines {}".format(e))
-        return artists
-
-    anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
-                                   interval=10, blit=False, repeat=False)
-    try:
-        plt.autoscale(True)
-        plt.show()
-    except Exception as e:
-        print("Error at plt.show {}".format(e))
-
+                print("Error in optimize network: {}".format(e))
+            allocation = Allocation(0, p, q, random.uniform(10, 60))
+            allocator.schedule(allocator.send_allocation, args={
+                               'nid': name, 'allocation': allocation})
+        sleep(10)
 
 allocator = sim.create_node(
     ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
@@ -345,7 +246,7 @@ for node in nodes:
 
 with Executor(max_workers=200) as executor:
     try:
-        executor.submit(runpp)
+        executor.submit(runpp, initial_time)
     except Exception as e:
         print(e)
-    live_plot(c_buses)
+    live_plot(c_buses, plot_values)
