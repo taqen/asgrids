@@ -24,14 +24,20 @@ lock: Lock = Lock()
 CSV_FILE = '../victor_scripts/cigre/curves.csv'
 with_pv = False
 
-parser = argparse.ArgumentParser(description='Realtime Time multi-agent simulation of CIGRE LV network')
+parser = argparse.ArgumentParser(
+    description='Realtime Time multi-agent simulation of CIGRE LV network')
 parser.add_argument('--with_pv', metavar='with_pv', type=bool,
-                    help='with or without PV power production')
+                    help='with or without PV power production',
+                    default=False)
 parser.add_argument('--csv_file', metavar='CSV_FILE', type=str,
                     help='CSV database with loads timeseries',
                     default='../victor_scripts/cigre/curves.csv')
 args = parser.parse_args()
 
+with_pv = args.with_pv
+CSV_FILE = args.csv_file
+
+print("WITH PV: {}".format(with_pv))
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
 
@@ -39,6 +45,7 @@ sim: SmartGridSimulation = SmartGridSimulation()
 
 
 def shutdown(x, y):
+    print("Shutdown")
     allocations_queue.put([0, 0, 0, 0])
     sim.stop()
 
@@ -113,7 +120,7 @@ def create_nodes(net, remote):
         addr_to_name[node.local] = net.load['name'][i]
         if 'PV' in net.load['name'][i]:
             net.load['controllable'][i] = True
-            net.load['min_p_kw'][i] = 30 # 30kW max production for each PV
+            net.load['min_p_kw'][i] = 30  # 30kW max production for each PV
             net.load['max_p_kw'][i] = 0
             net.load['min_q_kvar'][i] = 0
             net.load['max_q_kvar'][i] = 0
@@ -137,7 +144,8 @@ def runpp():
             # print("runpp: updating {} new allocations".format(qsize))
             for i in range(qsize):
                 timestamp, name, p_kw, q_kw = allocations_queue.get()
-                if timestamp == 0:
+                if timestamp == name == p_kw == q_kw == 0:
+                    print("Terminating runpp")
                     return
                 net_copy.load.loc[net_copy.load['name'] == name, 'p_kw'] = p_kw
                 net_copy.load.loc[net_copy.load['name'] == name, 'q_kw'] = q_kw
@@ -190,18 +198,19 @@ def live_plot(buses):
         min_lines[bus] = ax[bus].plot([], [], color='red')[0]
         max_lines[bus] = ax[bus].plot([], [], color='red')[0]
         i = i + 1
+    plt.subplots_adjust(hspace=0.7, bottom=0.2)
 
     def init():
         try:
-            for i, a in ax.items():
+            for bus, a in ax.items():
                 min_value = 0.95
                 max_value = 1.05
-                a.set_title('voltage value (p.u.) - bus {}'.format(i))
+                a.set_title('voltage value (p.u.) - bus {}'.format(bus))
                 a.set_ylim([min_value*0.99, max_value*1.01])
 
-                lines[i].set_data([], [])
-                min_lines[i].set_data([0], [min_value])
-                max_lines[i].set_data([0], [max_value])
+                lines[bus].set_data([], [])
+                min_lines[bus].set_data([0], [min_value])
+                max_lines[bus].set_data([0], [max_value])
         except Exception as e:
             print("Error at live_plot init {}".format(e))
 
@@ -288,7 +297,7 @@ def live_plot(buses):
             artists = artists + [line for _, line in lines.items()]
             artists = artists + [line for _, line in max_lines.items()]
             artists = artists + [line for _, line in min_lines.items()]
-
+            artists = artists + [a for _, a in ax.items()]
         except Exception as e:
             print("Exception when filling lines {}".format(e))
         return artists
@@ -300,6 +309,7 @@ def live_plot(buses):
         plt.show()
     except Exception as e:
         print("Error at plt.show {}".format(e))
+
 
 allocator = sim.create_node(
     ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
@@ -314,7 +324,7 @@ net.load['max_q_kvar'] = None
 net.load['controllable'] = False
 
 nodes = create_nodes(net, allocator.local)
-c_buses = [2, 12, 16]
+c_buses = []
 for row in net.bus.iterrows():
     if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
         c_buses.append(row[0])
