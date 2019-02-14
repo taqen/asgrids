@@ -5,7 +5,7 @@ import logging
 import queue
 import time
 from abc import ABCMeta
-from heapq import heappush
+from heapq import heappush, heappop
 from random import Random
 from threading import Thread
 
@@ -15,13 +15,13 @@ from simpy.core import Environment, Infinity, NORMAL
 from .async_communication import AsyncCommunication
 
 logger = logging.getLogger('Agent')
-
-logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+# logger.setLevel(logging.INFO)
+# ch.setLevel(logging.INFO)
 
 
 class ErrorModel(object):
@@ -34,6 +34,10 @@ class ErrorModel(object):
 
 
 class AgentEnvironment(Environment):
+    def __init__(self, initial_time=0):
+        self.initial_time = initial_time
+        super(AgentEnvironment, self).__init__(initial_time)
+
     def schedule(self, event, priority=NORMAL, delay=0):
         """
         Schedule an *event* with a given *priority* and a *delay*.
@@ -42,6 +46,37 @@ class AgentEnvironment(Environment):
         heappush(self._queue,
                  (time.time() + delay, priority, next(self._eid), event))
 
+    def step(self):
+        """Process the next event.
+
+        Raise an :exc:`EmptySchedule` if no further events are available.
+
+        """
+        try:
+            self._now, _, _, event = heappop(self._queue)
+        except IndexError:
+            raise EmptySchedule()
+
+        if not event._ok and not hasattr(event, '_defused'):
+            # The event has failed and has not been defused. Crash the
+            # environment.
+            # Create a copy of the failure exception with a new traceback.
+            exc = type(event._value)(*event._value.args)
+            exc.__cause__ = event._value
+            raise exc
+        if not event._ok:
+            return
+
+        # Process callbacks of the event. Set the events callbacks to None
+        # immediately to prevent concurrent modifications.
+        callbacks, event.callbacks = event.callbacks, None
+        for callback in callbacks:
+            callback(event)
+
+    @property
+    def now(self):
+        """The current simulation time."""
+        return self._now - self.initial_time
 
 # A generic Network Agent.
 class Agent(object, metaclass=ABCMeta):
@@ -110,7 +145,10 @@ class Agent(object, metaclass=ABCMeta):
         while True:
             delay = self.env.peek() - time.time()
             if delay <= 0:
-                self.env.step()
+                try:
+                    self.env.step()
+                except BaseException as e:
+                    self.logger.info(e)
                 continue
             try:
                 func = self.tasks.get(timeout=None if delay == Infinity else delay)
@@ -139,11 +177,17 @@ class Agent(object, metaclass=ABCMeta):
 
         """
         if callbacks is None:
-            callbacks = list()
-        self.logger.debug("scheduling action {} at {}".format(action, time.time()))
+            callbacks = []
+        self.logger.debug("scheduling action {} at {}".format(action, self.env.now))
+    
+        if not isinstance(self.env, Environment):
+            self.logger.warning("Scheduling failed, Agent Environment not ready!")
+            return
+
         event = self.env.event()
         event._ok = True
-        event._value = value
+        if value is not None:
+            event._value = value
         event.callbacks.append(lambda e: self.logger.debug("executing action{}".format(action)))
         if args is None:
             event.callbacks.append(lambda e: action())
@@ -154,8 +198,9 @@ class Agent(object, metaclass=ABCMeta):
         for callback in callbacks:
             event.callbacks.append(lambda e: callback())
 
-        self.tasks.put(lambda env: env.schedule(event=event, delay=delay))
-        # return event
+        task = lambda env: env.schedule(event=event, delay=delay)
+        self.tasks.put(task)
+        return event
 
     def stop(self):
         """ stop the Agent by interrupted the loop"""
@@ -179,33 +224,15 @@ class Agent(object, metaclass=ABCMeta):
         self.logger.debug("creating timer {} for {}s".format(eid, timeout))
 
         def event_process():
-            try:
-                yield self.env.timeout(timeout, value=eid)
-            except simpy.exceptions.Interrupt:
-                # self.logger.warning("event_process interrupted for eid {}".format(eid))
-                return
+            # try:
+            #     yield self.env.timeout(timeout, value=eid)
+            # except simpy.exceptions.Interrupt:
+            #     # self.logger.warning("event_process interrupted for eid {}".format(eid))
+            #     return
             self.logger.warning("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
-            self.schedule(self.remove_timeout, args={'eid': eid})
 
-        event = self.env.process(event_process())
+        event = self.schedule(action=event_process, delay=timeout)
         return event
-        # self.timeouts[eid] = event
-
-    def remove_timeout(self, eid):
-        """
-        Remove a timeout from Agent's timeouts
-        """
-        self.logger.debug("canceling timer {}".format(eid))
-        e = self.timeouts.pop(eid, None)
-        if e is None:
-            self.logger.warning("remote_timeout, no eid %s" % eid)
-            return
-        # if e is not None and not (e.processed or e.triggered):
-        try:
-            e.interrupt()
-            self.logger.debug("canceled timer {} at {}".format(eid, self.env.now))
-        except Exception as e:
-            self.logger.warning("remote_timeout, couldn't interrupt timeout {} \n {}".format(eid, e))
 
     def send(self, packet, remote):
         if isinstance(self._error_model, ErrorModel):
