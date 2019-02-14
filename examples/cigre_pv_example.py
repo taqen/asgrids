@@ -1,7 +1,7 @@
 from queue import Queue, Full, Empty
 from threading import Lock
 from time import time, sleep
-from sens import SmartGridSimulation, Allocation, live_plot
+from sens import SmartGridSimulation, Allocation, live_plot, runpp, optimize_network_pi, optimize_network_opf
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp
@@ -14,36 +14,47 @@ from concurrent.futures import ThreadPoolExecutor as Executor
 import argparse
 
 addr_to_name: dict = {}
-allocations_queue: Queue = Queue()
+allocations_queue: Queue = Queue(1000)
 measure_queues: dict = {}
-network_size: Queue = Queue()
+network_size: Queue = Queue(1000)
 plot_values: Queue = Queue(1000)
-optimal_values: Queue = Queue()
+voltage_values: Queue = Queue(1000)
 allocation_generators: dict = {}
 lock: Lock = Lock()
-CSV_FILE = '../victor_scripts/cigre/curves.csv'
-with_pv = False
 
 parser = argparse.ArgumentParser(
     description='Realtime Time multi-agent simulation of CIGRE LV network')
-parser.add_argument('--with_pv', metavar='with_pv', type=bool,
+parser.add_argument('--with_pv', type=bool,
                     help='with or without PV power production',
                     default=False)
-parser.add_argument('--csv_file', metavar='CSV_FILE', type=str,
+parser.add_argument('--csv_file', type=str,
                     help='CSV database with loads timeseries',
                     default='../victor_scripts/cigre/curves.csv')
+parser.add_argument('--json_file', type=str,
+                    help='CSV database with loads timeseries',
+                    default='../victor_scripts/cigre/cigre_network_lv.json')
+parser.add_argument('--with_optimize', type=bool,
+                    help='CSV database with loads timeseries',
+                    default=False)
+parser.add_argument('--with_plot', type=bool,
+                    help='CSV database with loads timeseries',
+                    default=True)
+
 args = parser.parse_args()
 
 with_pv = args.with_pv
 CSV_FILE = args.csv_file
+JSON_FILE = args.json_file
+with_optimize = args.with_optimize
+with_plot = args.with_plot
 
 print("WITH PV: {}".format(with_pv))
+print("WITH OPTIMIZE: {}".format(with_optimize))
+print("WITH PLOT: {}".format(with_plot))
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
 
 # Handle ctrl-c interruptin
-
-
 def shutdown(x, y):
     print("Shutdown")
     allocations_queue.put([0, 0, 0, 0])
@@ -74,17 +85,19 @@ def csv_generator(file, columns=None):
     return iter(filtered.values.tolist())
 
 
-def generate_allocations(node, old_allocation):
+def generate_allocations(node, old_allocation, now=0):
     if node not in allocation_generators:
         allocation_generators[node] = \
             csv_generator(CSV_FILE,
                           columns=['%s_P' % addr_to_name[node],
                                    '%s_Q' % addr_to_name[node]])
     # print("generating allocation for %s"%addr_to_name[node])
-    if 'PV' in addr_to_name[node] and with_pv is False:
-        t, p, q = [10, 0, 0]
-    else:
-        t, p, q = next(allocation_generators[node])
+    t, p, q = [10, 0, 0]
+    if not ('PV' in addr_to_name[node] and with_pv is False):
+        while True:
+            t, p, q = next(allocation_generators[node])
+            if t > now:
+                break
     allocation = Allocation(0, p, q, t)
     return allocation
 
@@ -106,6 +119,11 @@ def allocation_updated(allocation: Allocation, node_addr: str):
         res = None
     return res
 
+def allocator_measure_updated(allocation: list, node_addr: str):
+    # we receive a list containing current PQ values and Voltage measure
+    v = allocation[1]
+    # print("allocator updated v = {} for node {}".format(v, node_addr))
+    voltage_values.put_nowait([node_addr, v])
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
@@ -120,7 +138,7 @@ def create_nodes(net, remote):
         addr_to_name[node.local] = net.load['name'][i]
         if 'PV' in net.load['name'][i]:
             net.load['controllable'][i] = True
-            net.load['min_p_kw'][i] = 30  # 30kW max production for each PV
+            net.load['min_p_kw'][i] = -30  # 30kW max production for each PV
             net.load['max_p_kw'][i] = 0
             net.load['min_q_kvar'][i] = 0
             net.load['max_q_kvar'][i] = 0
@@ -133,91 +151,12 @@ def create_nodes(net, remote):
     return nodes
 
 
-def runpp(initial_time=0):
-    lock.acquire()
-    net_copy = deepcopy(net)
-    lock.release()
-
-    while True:
-        try:
-            qsize = allocations_queue.qsize()
-            # print("runpp: updating {} new allocations".format(qsize))
-            for i in range(qsize):
-                timestamp, name, p_kw, q_kw = allocations_queue.get()
-                if timestamp == name == p_kw == q_kw == 0:
-                    print("Terminating runpp")
-                    return
-                net_copy.load.loc[net_copy.load['name'] == name, 'p_kw'] = p_kw
-                net_copy.load.loc[net_copy.load['name'] == name, 'q_kw'] = q_kw
-        except Exception as e:
-            print(e)
-        converged = True
-        try:
-            pp.runpp(net_copy, init_vm_pu='results', verbose=True)
-        except Exception as e:
-            print(e)
-            converged = False
-
-        # Updating voltage measures for clients and live_plot
-        if converged:
-            for node in measure_queues:
-                bus_ind = net_copy.load['bus'][net.load['name'] == node].item()
-                vm_pu = 0
-                vm_pu = net_copy.res_bus['vm_pu'][bus_ind].item()
-                try:
-                    measure_queues[node].put_nowait(vm_pu)
-                except Full:
-                    measure_queues[node].get()
-                    measure_queues[node].put(vm_pu)
-                # print("\nVotage at bus {}: {}\n".format(bus_ind, vm_pu))
-            try:
-                for row in net_copy.res_bus.iterrows():
-                    if (net_copy.load.loc[net_copy.load['bus'] == row[0]]['controllable'] == True).any():
-                        plot_values.put_nowait(
-                            [time()-initial_time, row[0], row[1][0].item()])
-            except Full:
-                print("plot_values is full")
-                plot_values.get()
-                plot_values.put([time(), row[0], row[1][0].item()])
-            except Exception as e:
-                print(e)
-
-
-def optimize_network(net):
-    lock.acquire()
-    net_copy = net
-    lock.release()
-    from sens import PIController
-    controller = PIController()
-    while True:
-        try:
-            c_loads = net_copy.load[net_copy.load['controllable'] == True]
-        except Exception as e:
-            print(e)
-        voltages = []
-        for b in c_loads['bus']:
-            voltages = voltages + [net_copy.res_bus['vm_pu'][b]]
-        _, pv_a = controller.generate_allocations([], c_loads[''])
-
-        print("optimizing {} nodes".format(len(c_loads.index)))
-        for row in c_loads.iterrows():
-            try:
-                p = net_copy.res_load['p_kw'][row[0]].item()
-                q = net_copy.res_load['q_kvar'][row[0]].item()
-                name = row[1]['name']
-            except Exception as e:
-                print("Error in optimize network: {}".format(e))
-            allocation = Allocation(0, p, q, random.uniform(10, 60))
-            allocator.schedule(allocator.send_allocation, args={
-                               'nid': name, 'allocation': allocation})
-        sleep(10)
-
 allocator = sim.create_node(
     ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
 initial_time = time()
 allocator.run()
 
-net = pp.from_json('../victor_scripts/cigre/cigre_network_lv.json')
+net = pp.from_json(JSON_FILE)
 net.load['min_p_kw'] = None
 net.load['min_q_kvar'] = None
 net.load['max_p_kw'] = None
@@ -246,7 +185,14 @@ for node in nodes:
 
 with Executor(max_workers=200) as executor:
     try:
-        executor.submit(runpp, initial_time)
+        net_copy = deepcopy(net)
+        executor.submit(runpp, net_copy, allocations_queue, measure_queues, plot_values, with_plot=True, initial_time=initial_time)
+        if with_optimize:
+            net_copy = deepcopy(net)
+            allocator.allocation_updated = allocator_measure_updated
+            executor.submit(optimize_network_pi, net_copy, allocator, voltage_values)
+
     except Exception as e:
         print(e)
-    live_plot(c_buses, plot_values)
+    if with_plot:
+        live_plot(c_buses, plot_values)
