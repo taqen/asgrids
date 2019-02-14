@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 from .agent import Agent
-from .defs import EventId, Packet
-
+from .defs import EventId, Packet, Allocation
+from simpy.exceptions import Interrupt
+from itertools import count
 
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
@@ -11,12 +12,14 @@ class NetworkAllocator(Agent):
         super(NetworkAllocator, self).__init__(env=env)
         self.nid = local
         self.nodes = {}
-        self.alloc_ack_timeout = 2
+        self.alloc_ack_timeout = 3
         self.stop_ack_timeout = 5
         self.local = local
         self.identity = self.nid
         self.type = "NetworkAllocator"
-        self.alloc_timeouts = dict()
+        self.alloc_timeouts = {}
+        self.stop_timeouts = {}
+        self.aid_count = count()
         # various callbacks
         self.allocation_updated = None
 
@@ -38,20 +41,32 @@ class NetworkAllocator(Agent):
             self.add_node(nid=p.src, allocation=p.payload)
             self.schedule(self.send_join_ack, {'dst': p.src})
         elif msg_type == 'allocation_ack':
+            self.logger.info("received allocation_ack from {} for allocation {}".format(p.src, p.payload[0].aid))
             self.add_node(nid=p.src, allocation=p.payload)
-            # Interrupting timeout event for this allocation
-            self.alloc_timeouts[p.src].interrupt()
+            # Interrupting ack timeout event for this allocation
+            try:
+                aid = p.payload[0].aid
+                if aid not in self.alloc_timeouts:
+                    self.logger.warning("received ack, but didn't send an allocation: {}".format(aid))
+                elif self.alloc_timeouts[aid] is not None:
+                    self.logger.debug("canceling ack timeout for: {}".format(aid))
+                    self.alloc_timeouts[aid].fail(BaseException("Interrupted"))
+                    self.alloc_timeouts.pop(aid)
+                else:
+                    self.logger.warning("received duplicate allocation_ack from {}!!!".format(p.src))
+            except Exception as e:
+                self.logger.warning("exception while canceling alloc_timeouts: {}".format(e))
         elif msg_type == 'leave':
             self.schedule(self.remove_node, {'nid': p.src})
         elif msg_type == 'stop':
             self.schedule(self.stop_network)
         elif msg_type == 'stop_ack':
             self.logger.debug("Received stop_ack from {}".format(p.src))
-            eid = EventId(p)
+            # Interrupting ack timeout event for this allocation
             try:
-                self.remove_timeout(eid)
+                self.stop_timeouts[p.src].fail(BaseException("Interrupted"))
             except Exception as e:
-                ValueError(e)
+                self.logger.warning(e)
             self.remove_node(nid=src)
         elif msg_type == 'curr_allocation':
             self.add_node(nid=p.src, allocation=p.payload)
@@ -68,10 +83,14 @@ class NetworkAllocator(Agent):
         self.logger.info("adding node {}".format(nid))
         if nid in self.nodes:
             msg = "node {} already added".format(nid)
-            if allocation != self.nodes[nid]:
+            if allocation[0] != self.nodes[nid][0] or allocation[1] != self.nodes[nid][1]:
                 msg = "{} - updated allocation from {} to {}".format(msg, self.nodes[nid], allocation)
                 if callable(self.allocation_updated):
-                    self.allocation_updated(allocation, nid)
+                    try:
+                        self.allocation_updated(allocation, nid)
+                    except Exception as e:
+                        self.logger.warning("Failed calling allocation_updated({}, {}".format(allocation, nid))
+
                 self.nodes[nid] = allocation
 
             self.logger.info(msg)
@@ -98,14 +117,18 @@ class NetworkAllocator(Agent):
         :rtype:
 
         """
-        self.logger.info("sending allocation to {}".format(nid))
-        packet = Packet(ptype='allocation', payload=allocation, src=self.local, dst=nid)
+        a = Allocation(next(self.aid_count), allocation.p_value, allocation.q_value, allocation.duration)
+        self.logger.debug("sending allocation {} to {}".format(a.aid, nid))
+        packet = Packet(ptype='allocation', payload=a, src=self.local, dst=nid)
 
         # Creating Event that is triggered if no ack is received before a timeout
         eid = EventId(allocation, nid)
-        self.alloc_timeouts[nid] = self.create_timeout(
-            eid=eid, timeout=self.alloc_ack_timeout,
-            msg='no ack from {} for allocation {}'.format(nid, allocation.aid))
+        try:
+            self.alloc_timeouts[a.aid] = self.create_timeout(
+                timeout=self.alloc_ack_timeout, eid=eid,
+                msg='no ack from {} for allocation {}'.format(nid, a.aid))
+        except Exception as e:
+            self.logger.warning(e)
         self.send(packet, remote=nid)
 
     def send_join_ack(self, dst):
@@ -135,7 +158,8 @@ class NetworkAllocator(Agent):
             self.send(packet, remote=node)
             self.logger.info("Sent stop to {}".format(node))
             eid = EventId(packet, node)
-            self.create_timeout(timeout=self.stop_ack_timeout, msg="no stop_ack from {}".format(node), eid=eid)
+            event = self.create_timeout(timeout=self.stop_ack_timeout, msg="no stop_ack from {}".format(node), eid=eid)
+            self.stop_timeouts[node] = event
             self.logger.info("Stopping {}".format(node))
 
         while True:
