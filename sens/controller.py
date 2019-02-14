@@ -82,13 +82,22 @@ class PIController(object):
         assert len(load_voltages) == len(load_maximum_powers)
         assert len(generator_voltages) == len(generator_maximum_powers)
 
-        # Manipulate numpy arrays
-        load_voltages = np.array(load_voltages, dtype=np.float_)
-        generator_voltages = np.array(generator_voltages, dtype=np.float_)
+        if len(load_voltages) > 0:
+            # Manipulate numpy arrays
+            load_voltages = np.array(load_voltages, dtype=np.float_)
+            # Compute the maximal violation error
+            epsilon_error_load = (load_voltages - self.maximum_voltage).max()
+        else:
+            epsilon_error_load = 0
 
-        # Compute the maximal violation error
-        epsilon_error_load = (load_voltages - self.maximum_voltage).max()
-        epsilon_error_generator = (generator_voltages - self.maximum_voltage).max()
+        if len(generator_voltages) > 0:
+            # Manipulate numpy arrays
+            generator_voltages = np.array(generator_voltages, dtype=np.float_)
+            # Compute the maximal violation error
+            epsilon_error_generator = (generator_voltages - self.maximum_voltage).max()
+        else:
+            epsilon_error_generator = 0
+
         epsilon_error = max(epsilon_error_generator, epsilon_error_load)
 
         # Update the integral error
@@ -96,13 +105,13 @@ class PIController(object):
 
         # Compute mu (hte p_max scale factor)
         mu = np.clip(a=1 - self.sigma * epsilon_error - self.tau * self._lambda_error, a_min=0, a_max=1)
-
+        mu = -1*mu.item()
         # Create the allocations objects
         # No control on the load ie. they consume what they want
-        load_allocations = [Allocation(aid=next(self._count), p_value=p_max, q_value=None, duration=self.duration) for
+        load_allocations = [Allocation(aid=next(self._count), p_value=p_max, q_value=0, duration=self.duration) for
                             p_max in load_maximum_powers]
         # We use the mu float to control the maximum production of the generators
-        generator_allocations = [Allocation(aid=next(self._count), p_value=mu * p_max, q_value=None,
+        generator_allocations = [Allocation(aid=next(self._count), p_value=mu * p_max, q_value=0,
                                             duration=self.duration) for p_max in generator_maximum_powers]
 
         return load_allocations, generator_allocations
