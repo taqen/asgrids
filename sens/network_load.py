@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from typing import Callable
+from simpy.exceptions import Interrupt
 
 from .agent import Agent
 from .defs import Allocation, Packet
@@ -12,19 +13,19 @@ class NetworkLoad(Agent):
         super(NetworkLoad, self).__init__(env=env)
         self.remote = remote
         self.nid = self.local
-        self.curr_allocation = Allocation()
-        self.local = local
-        self.callback = self.handle_receive
-        self.identity = self.nid
-        self.type = "NetworkLoad"
+        self.curr_allocation: Allocation = Allocation()
+        self.local: str = local
+        self.callback: Callable = self.handle_receive
+        self.identity: str = self.nid
+        self.type: str = "NetworkLoad"
         # storage for current electrical measures
-        self.curr_measure = 0
+        self.curr_measure: float = 0
         # callback to call when reporting allocation, to get current electrical measures.
-        self.update_measure = None  # type:Callable
+        self.update_measure: Callable = None
         # callback to call when node received join_ack
-        self.joined_callback = None  # type:Callable
+        self.joined_callback: Callable = None
         # callback to generate allocation values for this NetworkLoad
-        self.generate_allocations = None  # type:Callable
+        self.generate_allocations: Callable = None
         # Event that will trigger handle_allocation for next value
         self.next_allocation = None
 
@@ -39,7 +40,7 @@ class NetworkLoad(Agent):
         """
         assert isinstance(p, Packet), p
 
-        self.logger.warning("handling {} from {}".format(p, p.src))
+        self.logger.info("handling {} from {}".format(p, p.src))
         msg_type = p.ptype
 
         if msg_type == 'join_ack':
@@ -52,21 +53,27 @@ class NetworkLoad(Agent):
             # Interrupting any pending next allocation
             # because allocator demands take priority
             if self.next_allocation is not None:
-                self.next_allocation.interrupt()
+                self.next_allocation.fail(BaseException("Interrupted"))
                 self.next_allocation = None
 
-            allocation = p.payload
-            self.logger.debug("allocation={}".format(allocation))
+            if isinstance(p.payload, Allocation):
+                allocation = p.payload
+            elif isinstance(p.payload, list) and isinstance(p.payload[0], Allocation):
+                allocation = p.payload[0]
+            else:
+                raise ValueError
+
+            self.logger.info("received allocation={}".format(allocation))
             self.schedule(action=self.send_ack,
-                          args={'allocation': allocation, 'dst': p.src})
-            self.schedule(action=self.handle_allocation, args={'allocation': allocation})
+                          args={'allocation': [allocation, self.curr_measure], 'dst': p.src})
+            self.schedule(action=self.handle_allocation, args={'allocation': allocation, 'report': False})
 
         if msg_type == 'stop':
             self.logger.info("Received Stop from {}".format(p.src))
             self.send(Packet(ptype='stop_ack', src=self.local), p.src)
             self.schedule(self.stop)
 
-    def handle_allocation(self, allocation):
+    def handle_allocation(self, allocation, report=True):
         """ Handle a received allocation
 
         :param allocation: the allocation duration and value to be processed.
@@ -76,10 +83,19 @@ class NetworkLoad(Agent):
         """
         self.logger.info("{} - Current allocation value is {}".format(self.local, self.curr_allocation))
 
+        if self.update_measure is not None:
+            measure = self.update_measure(self.curr_allocation, self.local)
+            if measure is not None:
+                self.curr_measure = measure
+                self.logger.info("New measure is {}v".format(measure))
+
         self.curr_allocation = allocation
 
         self.logger.info("{} - New allocation value is {}".format(self.local, self.curr_allocation))
-        self.schedule(self.report_allocation)
+        
+
+        if report:
+            self.schedule(self.report_allocation)
 
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
@@ -91,12 +107,7 @@ class NetworkLoad(Agent):
     def report_allocation(self):
         if self.remote is not None:
             self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
-            if self.update_measure is not None:
-                measure = self.update_measure(self.curr_allocation, self.local)
-                if measure is not None:
-                    self.curr_measure = measure
-                    self.logger.info("New measure is {}".format(measure))
-            packet = Packet('curr_allocation', self.curr_allocation, self.local)
+            packet = Packet('curr_allocation', [self.curr_allocation, self.curr_measure], self.local)
             self.send(packet, self.remote)
         else:
             self.logger.info("Not reporting, remote not defined yet")
@@ -110,7 +121,7 @@ class NetworkLoad(Agent):
 
         """
         self.logger.info('{} Joining {}'.format(self.local, dst))
-        packet = Packet('join', self.curr_allocation, self.local)
+        packet = Packet('join', [self.curr_allocation, None], self.local)
         self.send(packet, dst)
 
     def send_ack(self, allocation, dst):
@@ -122,6 +133,7 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
+        self.logger.info("{} sending allocation_ack to {}".format(self.local, dst))
         packet = Packet('allocation_ack', allocation, self.local)
 
         self.send(packet, dst)
