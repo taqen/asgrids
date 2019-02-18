@@ -190,8 +190,8 @@ def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue
                     raise(e)
 
 
-def optimize_network_opf(net, allocator, voltage_values=None, duty_cycle=10, min_duration=10, max_duration=10):
-    from random import uniform
+def optimize_network_opf(net, allocator, voltage_values=None, duty_cycle=10):
+    print("Optimizing network in realtime with OPF")
     while True:
         pp.runopp(net, verbose=False)
         try:
@@ -208,33 +208,56 @@ def optimize_network_opf(net, allocator, voltage_values=None, duty_cycle=10, min
             except Exception as e:
                 print("Error in optimize network: {}".format(e))
             try:
-                allocation = Allocation(0, p, q, uniform(min_duration, max_duration))
+                allocation = Allocation(0, p, q, duty_cycle)
+                print(allocation, name)
                 allocator.send_allocation(nid=name, allocation=allocation)
             except Exception as e:
                 print("Error scheduing allocation: {}".format(e))
         sleep(duty_cycle)
 
 def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=5):
-    print("Optimizing network in realtime")
-    controller = PIController(maximum_voltage=1.05)
+    print("Optimizing network in realtime with PI")
+    controller = PIController(maximum_voltage=400*1.05, duration=duty_cycle)
     try:
+        # Listing all controllable loads, these are the PV generators that will be optimized
         pv_gens = net.load.loc[net.load['controllable'] == True]['name'].tolist()
     except Exception as e:
         print(e)
 
     while True:
-        qsize = voltage_values.qsize()
         nids = []
-        vs = []
+        gen_vs: list = [] # List of generators(PV) current voltages
+        load_vs: list = [] # List of non-generators current voltages
+        load_max_as: list = [] # List of maximum allocations allowed for non-generators
+        # while len(net.load['name'].tolist()) < len(gen_vs) + len(load_vs):
+        qsize = voltage_values.qsize() # Getting all measurements from the queue at once
         for _ in range(qsize):
             nid, v = voltage_values.get()
+            try:
+                # We wanna know the actual voltage of the bus
+                bus_id = net.load.loc[net.load['name']==nid, 'bus'].item()
+                #bus_vn = net.bus['vn_kv'][bus_id].item()*1e3
+                bus_vn = 400#v
+            except Exception as e:
+                print("Error getting bus vn: {}".format(e))
             if nid in pv_gens:
                 nids.append(nid)
-                vs.append(v)
+                # converting nominal values to absolute values in V
+                gen_vs.append(v*bus_vn)
+            else:
+                # converting nominal values to absolute values in V
+                load_vs.append(v*bus_vn)
+                try:
+                    # Using loads (non-generators) allocations from net as their maximum allocations (shouldn't have big effect)
+                    # Maximum allocation for generators are -30kW
+                    load_max_as.append(net.load.loc[net.load['name'] == nid, 'p_kw'].item()*1e3)
+                except Exception as e:
+                    print(e)
         try:
-            if len(vs) > 0:
-                print("Optimizing {}".format([nid for nid in nids]))
-                _, pv_a = controller.generate_allocations([], vs, [], [30]*len(vs))
+            if len(gen_vs) > 0:
+                # print("Optimizing {}".format([nid for nid in nids]))
+                _, pv_a = controller.generate_allocations(load_vs, gen_vs, load_max_as, [-30e3]*len(gen_vs))
+                # print(len(pv_a))
             else:
                 continue
         except Exception as e:
@@ -242,7 +265,9 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=5):
             raise e
         # print("optimizing {}".format(nid))
         try:
-            for allocation, nid in zip(pv_a, nids):
+            for a, nid in zip(pv_a, nids):
+                allocation = Allocation(a.aid, a.p_value/1e3, a.q_value/1e3, a.duration)
+                print(allocation, nid)
                 allocator.send_allocation(nid=nid, allocation=allocation)
         except Exception as e:
             print(e)
@@ -250,7 +275,8 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=5):
             sleep(duty_cycle)
 
 
-def live_plot(buses, plot_values):
+def live_plot(buses, plot_values, interval=10):
+    from math import ceil, sqrt
     from matplotlib import pyplot as plt, animation
     import numpy as np
 
@@ -259,7 +285,6 @@ def live_plot(buses, plot_values):
     lines = {}
     min_lines = {}
     max_lines = {}
-    from math import ceil, sqrt
     grid_dim = ceil(sqrt(len(buses)))
     i = 1
     for bus in buses:
@@ -297,8 +322,10 @@ def live_plot(buses, plot_values):
             value = {}
             try:
                 qsize = plot_values.qsize()
+                if qsize == 0:
+                    yield None, None
                 for _ in range(qsize):
-                    t, b, v = plot_values.get()
+                    t, b, v = plot_values.get_nowait()
                     if b not in buses:
                         continue
                     else:
@@ -317,6 +344,8 @@ def live_plot(buses, plot_values):
     def animate(data):
         t, v = data
         artists = []
+        if t is None:
+            return artists
         try:
             for bus_id in v:
                 xmin, xmax = ax[bus_id].get_xlim()
@@ -372,7 +401,7 @@ def live_plot(buses, plot_values):
         return artists
 
     anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
-                                   interval=10, blit=False, repeat=False)
+                                   interval=interval, blit=False, repeat=False)
     try:
         plt.autoscale(True)
         plt.show()

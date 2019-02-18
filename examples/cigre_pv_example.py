@@ -18,7 +18,7 @@ allocations_queue: Queue = Queue(1000)
 measure_queues: dict = {}
 network_size: Queue = Queue(1000)
 plot_values: Queue = Queue(1000)
-voltage_values: Queue = Queue(1000)
+voltage_values: Queue = Queue()
 allocation_generators: dict = {}
 lock: Lock = Lock()
 
@@ -39,6 +39,13 @@ parser.add_argument('--with_optimize', type=bool,
 parser.add_argument('--with_plot', type=bool,
                     help='CSV database with loads timeseries',
                     default=True)
+parser.add_argument('--optimize_cycle', type=int,
+                    help='CSV database with loads timeseries',
+                    default=0)
+
+parser.add_argument('--optimize_type', type=str,
+                    help='CSV database with loads timeseries',
+                    default='pi')
 
 args = parser.parse_args()
 
@@ -47,9 +54,13 @@ CSV_FILE = args.csv_file
 JSON_FILE = args.json_file
 with_optimize = args.with_optimize
 with_plot = args.with_plot
+optimize_cycle = args.optimize_cycle
+optimize_type = args.optimize_type
 
 print("WITH PV: {}".format(with_pv))
-print("WITH OPTIMIZE: {}".format(with_optimize))
+if with_optimize:
+    print("WITH OPTIMIZER: {}".format(optimize_type))
+    print("WITH OPTIMIZE CYCLE: {}".format(optimize_cycle))
 print("WITH PLOT: {}".format(with_plot))
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
@@ -189,10 +200,14 @@ with Executor(max_workers=200) as executor:
         executor.submit(runpp, net_copy, allocations_queue, measure_queues, plot_values, with_plot=True, initial_time=initial_time)
         if with_optimize:
             net_copy = deepcopy(net)
-            allocator.allocation_updated = allocator_measure_updated
-            executor.submit(optimize_network_pi, net_copy, allocator, voltage_values)
-
+            if optimize_type == 'pi':
+                allocator.allocation_updated = allocator_measure_updated
+                executor.submit(optimize_network_pi, net_copy, allocator, voltage_values, duty_cycle=optimize_cycle)
+            elif optimize_type == 'opf':
+                executor.submit(optimize_network_opf, net_copy, allocator, voltage_values, duty_cycle=optimize_cycle)
+            else:
+                raise ValueError("optimize_type has to be either 'pi' or 'opf'")
     except Exception as e:
         print(e)
     if with_plot:
-        live_plot(c_buses, plot_values)
+        live_plot(c_buses, plot_values, interval=1000)
