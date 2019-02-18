@@ -28,6 +28,8 @@ class NetworkLoad(Agent):
         self.generate_allocations: Callable = None
         # Event that will trigger handle_allocation for next value
         self.next_allocation = None
+        self.join_ack_timeout = 3
+        self.join_ack_timer = None
 
     def handle_receive(self, p, src=None):
         """ Handled payload received from AsyncCommunication
@@ -46,6 +48,7 @@ class NetworkLoad(Agent):
         if msg_type == 'join_ack':
             self.logger.info("Joined successfully allocator {}".format(p.src))
             self.remote = p.src
+            self.join_ack_timer.fail(BaseException("Interrupted"))
             if self.joined_callback is not None:
                 self.joined_callback(self.local, self.remote)
 
@@ -83,16 +86,18 @@ class NetworkLoad(Agent):
         """
         self.logger.info("{} - Current allocation value is {}".format(self.local, self.curr_allocation))
 
-        if self.update_measure is not None:
-            measure = self.update_measure(self.curr_allocation, self.local)
-            if measure is not None:
-                self.curr_measure = measure
-                self.logger.info("New measure is {}v".format(measure))
-
         self.curr_allocation = allocation
 
         self.logger.info("{} - New allocation value is {}".format(self.local, self.curr_allocation))
-        
+
+        if self.update_measure is not None:
+            try:
+                measure = self.update_measure(self.curr_allocation, self.local)
+            except Exception as e:
+                self.logger.info("Couldn't update measure: {}".format(e))
+            if measure is not None:
+                self.curr_measure = measure
+                self.logger.info("New measure is {}v".format(measure))
 
         if report:
             self.schedule(self.report_allocation)
@@ -120,9 +125,16 @@ class NetworkLoad(Agent):
         :rtype:
 
         """
-        self.logger.info('{} Joining {}'.format(self.local, dst))
-        packet = Packet('join', [self.curr_allocation, None], self.local)
-        self.send(packet, dst)
+        try:
+            self.logger.info('{} Joining {}'.format(self.local, dst))
+            packet = Packet('join', [self.curr_allocation, None], self.local)
+            self.join_ack_timer = self.create_timeout(
+                    timeout=self.join_ack_timeout, eid=0,
+                    msg='no join ack from {}'.format(dst))
+            self.join_ack_timer.callbacks.append(lambda e: self.send_join(dst))
+            self.send(packet, dst)
+        except Exception as e:
+            self.logger.warning("Error sending join: {}".format(e))
 
     def send_ack(self, allocation, dst):
         """ Acknowledge a requested allocation to the Allocator.
