@@ -105,7 +105,7 @@ class PIController(object):
 
         # Compute mu (hte p_max scale factor)
         mu = np.clip(a=1 - self.sigma * epsilon_error - self.tau * self._lambda_error, a_min=0, a_max=1)
-        mu = -1*mu.item()
+        mu = mu.item()
         # Create the allocations objects
         # No control on the load ie. they consume what they want
         load_allocations = [Allocation(aid=next(self._count), p_value=p_max, q_value=0, duration=self.duration) for
