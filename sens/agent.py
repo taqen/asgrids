@@ -229,7 +229,7 @@ class Agent(object, metaclass=ABCMeta):
             # except simpy.exceptions.Interrupt:
             #     # self.logger.warning("event_process interrupted for eid {}".format(eid))
             #     return
-            self.logger.warning("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
+            self.logger.info("timeout {} expired at {}: {}".format(eid, self.env.now, msg))
 
         event = self.schedule(action=event_process, delay=timeout)
         return event
