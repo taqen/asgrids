@@ -75,7 +75,7 @@ class AsyncCommunication(threading.Thread):
             self._client = self._context.socket(zmq.DEALER)
             # No lingering after socket is closed.
             # This has proven to cause problems terminating asyncio if not 0
-            self._client.setsockopt(zmq.LINGER, 50)
+            self._client.setsockopt(zmq.LINGER, 10)
             socket_address = 'tcp://{}'.format(remote)
             logger.info("{} connecting to {}".format(self._local_address, socket_address))
             self._client.connect(socket_address)
