@@ -143,6 +143,17 @@ class SmartGridSimulation(object):
 
 
 def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue, with_plot=False, initial_time=0):
+    """Perform power flow analysis to collect voltage values of all the buses
+    
+    Args:
+        net ([type]): pandapower network
+        allocations_queue (Queue): Contains updated p,q values that will be fed to the power flow analysis loop
+        measure_queues (dict): Measure results will be stored here
+        plot_queue (Queue): values sotred here are destined for plotting
+        with_plot (bool, optional): Defaults to False. Whether or not to generate plot values
+        initial_time (int, optional): Defaults to 0.
+    """
+
     while True:
         try:
             qsize = allocations_queue.qsize()
@@ -209,13 +220,12 @@ def optimize_network_opf(net, allocator, voltage_values=None, duty_cycle=10):
                 print("Error in optimize network: {}".format(e))
             try:
                 allocation = Allocation(0, p, q, duty_cycle)
-                print(allocation, name)
                 allocator.send_allocation(nid=name, allocation=allocation)
             except Exception as e:
                 print("Error scheduing allocation: {}".format(e))
         sleep(duty_cycle)
 
-def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=5):
+def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
     print("Optimizing network in realtime with PI")
     controller = PIController(maximum_voltage=400*1.05, duration=duty_cycle)
     try:
@@ -231,8 +241,22 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=5):
         load_max_as: list = [] # List of maximum allocations allowed for non-generators
         # while len(net.load['name'].tolist()) < len(gen_vs) + len(load_vs):
         qsize = voltage_values.qsize() # Getting all measurements from the queue at once
-        for _ in range(qsize):
-            nid, v = voltage_values.get()
+        values: dict = {}
+        # Some measures could be updates for the same nodes
+        # We only take the most recent measures
+        # We also clean up the queue along the way
+        try:
+            for _ in range(qsize):
+                nid, v = voltage_values.get()
+                values[nid] = v
+        except Exception as e:
+            print(e)
+        
+        if len(values)>0:
+            print("Optimizing {} nodes".format(len(values)))
+        for nid, v in values.items():
+            if v >=1.05:
+                print("Node {} above threshold".format(nid))
             try:
                 # We wanna know the actual voltage of the bus
                 bus_id = net.load.loc[net.load['name']==nid, 'bus'].item()
@@ -267,10 +291,10 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=5):
         try:
             for a, nid in zip(pv_a, nids):
                 allocation = Allocation(a.aid, a.p_value/1e3, a.q_value/1e3, a.duration)
-                print(allocation, nid)
                 allocator.send_allocation(nid=nid, allocation=allocation)
         except Exception as e:
             print(e)
+        values = {}
         if duty_cycle > 0:
             sleep(duty_cycle)
 
