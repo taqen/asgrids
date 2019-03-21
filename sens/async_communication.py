@@ -10,9 +10,9 @@ import msgpack
 import zmq
 import zmq.asyncio
 
-from .defs import ext_pack, ext_unpack
+from .defs import ext_pack, ext_unpack, Packet
 
-logger = logging.getLogger('AsyncCommThread')
+logger = logging.getLogger(__name__)
 
 
 # logger.setLevel(logging.DEBUG)
@@ -41,6 +41,25 @@ class AsyncCommunication(threading.Thread):
         asyncio.set_event_loop(self._loop)
         self._context = zmq.asyncio.Context()
         self._poller = zmq.asyncio.Poller()
+        try:
+            self._client = self._context.socket(zmq.DEALER)
+
+            if self._identity is not None:
+                logger.info("identity is %s" % self._identity)
+                identity = msgpack.packb(self._identity, encoding='utf-8', strict_types=True)
+                try:
+                    self._client.setsockopt(zmq.IDENTITY, identity)
+                except zmq.ZMQError as zmqerror:
+                    logger.error("Error setting socket identity. {}".format(zmqerror))
+                    raise zmqerror
+
+            # No lingering after socket is closed.
+            # This has proven to cause problems terminating asyncio when lingering infinitely
+            self._client.setsockopt(zmq.LINGER, 0)
+            self._poller.register(self._client, zmq.POLLIN)
+        except Exception as e:
+            logger.error(e)
+            raise e
 
         name = 'AsyncCommThread'
         if identity:
@@ -55,7 +74,7 @@ class AsyncCommunication(threading.Thread):
         finally:
             self._loop.close()
 
-    async def _send(self, request, remote):
+    async def _send(self, request: Packet, remote):
         try:
             p = msgpack.packb(request, default=ext_pack, strict_types=True, encoding='utf-8')
         except Exception as e:
@@ -63,27 +82,11 @@ class AsyncCommunication(threading.Thread):
             raise e
 
         try:
-            if self._identity is not None:
-                logger.info("identity is %s" % self._identity)
-                identity = msgpack.packb(self._identity, encoding='utf-8', strict_types=True)
-                try:
-                    self._client.setsockopt(zmq.IDENTITY, identity)
-                except zmq.ZMQError as zmqerror:
-                    logger.error("Error setting socket identity. {}".format(zmqerror))
-                    raise zmqerror
-
-            self._client = self._context.socket(zmq.DEALER)
-            # No lingering after socket is closed.
-            # This has proven to cause problems terminating asyncio if not 0
-            self._client.setsockopt(zmq.LINGER, 10)
             socket_address = 'tcp://{}'.format(remote)
             logger.info("{} connecting to {}".format(self._local_address, socket_address))
             self._client.connect(socket_address)
-            self._poller.register(self._client, zmq.POLLIN)
             logger.info('{} sending {} to {}'.format(self._local_address, request, socket_address))
             await self._client.send_multipart([p])
-            self._poller.unregister(self._client)
-            self._client.close()
         except zmq.ZMQError as zmqerror:
             logger.error("Error connecting client socket to address {}. {}".format(socket_address, zmqerror))
             raise zmqerror
@@ -121,3 +124,6 @@ class AsyncCommunication(threading.Thread):
     def stop(self):
         logger.info("Stopping AsyncCommThread")
         self.running = False
+        self._poller.unregister(self._client)
+        self._client.close()
+
