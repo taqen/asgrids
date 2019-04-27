@@ -58,14 +58,14 @@ plot_voltage = args.plot_voltage
 plot_load = args.plot_load
 optimize_cycle = args.optimize_cycle
 optimizer = args.optimizer
-simtime = args.sime_time
+simtime = args.sim_time
 
 print("WITH PV: {}".format(with_pv))
 if with_optimize:
     print("WITH OPTIMIZER: {}".format(optimizer))
     print("WITH OPTIMIZE CYCLE: {}".format(optimize_cycle))
 print("WITH PLOT: {}".format(plot_voltage))
-print("SIM TIME: {}".format(simtime))
+print("SIM TIME: {}s".format(simtime))
 
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
