@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 class AsyncCommunication(threading.Thread):
     def __init__(self, local_address=None, callback=None, identity=None):
 
-        self._receive_callback = None
         self._identity = identity
         self._callback = callback
         self._local_address = local_address
@@ -91,7 +90,7 @@ class AsyncCommunication(threading.Thread):
             await self._clients[remote].send_multipart([p])
         except zmq.ZMQError as zmqerror:
             logger.error("Error connecting client socket to address {}. {}".format(socket_address, zmqerror))
-            raise zmqerror
+            return
 
     async def _run_server(self):
         assert self._local_address is not None, 'local_address not set'
