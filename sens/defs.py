@@ -6,7 +6,6 @@ from collections import namedtuple
 from queue import Queue
 from random import Random
 from typing import Callable
-from matplotlib import pyplot as plt, animation
 import numpy as np
 import msgpack
 
