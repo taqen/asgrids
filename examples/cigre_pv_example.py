@@ -1,7 +1,7 @@
 from queue import Queue, Full, Empty
 from threading import Event, Lock
 from time import monotonic as time, sleep
-from sens import SmartGridSimulation, Allocation, live_plot_voltage, runpp, optimize_network_pi, optimize_network_opf
+from sens import SmartGridSimulation, Allocation, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp
@@ -92,9 +92,10 @@ terminate.clear()
 def shutdown(x, y):
     print("Shutdown")
     terminate.set()
-    # allocations_queue.put([0, 0, 0, 0])
-    # voltage_values.put([0,0])
+    allocations_queue.put([0, 0, 0, 0])
+    voltage_values.put([0,0])
     sim.stop()
+
 
 
 signal(SIGINT, shutdown)
@@ -143,19 +144,18 @@ def joined_network(src, dst):
     network_size.append(src)
 
 
-def allocation_updated(allocation: Allocation, node_addr: str, timestamp=None):
+def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     # We receive node_addr as "X.X.X.X:YYYY"
     # ind also identifies the node in pandapawer loads list
     # print("Node %s updated allocation"%node_addr)
-    if not timestamp:
-        print("ERROR, received update without timestamp")
-    allocations_queue.put(
-        [timestamp, node_addr, allocation.p_value, allocation.q_value])
     try:
-        res = measure_queues[node_addr].get_nowait()
+        allocations_queue.put(
+            [timestamp, node_addr, allocation.p_value, allocation.q_value])
+        return measure_queues[node_addr].get_nowait()
     except Empty:
-        res = None
-    return res
+        return None
+    except Exception as e:
+        print("Error in allocation_updated: {}".format(e))
 
 def allocator_measure_updated(allocation: list, node_addr: str):
     # we receive a list containing current PQ values and Voltage measure
@@ -280,9 +280,9 @@ with Executor(max_workers=200) as executor:
 
     except Exception as e:
         print(e)
-    if plot_voltage:
-        plot_buses = []
-        for row in net.bus.iterrows():
-            if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-                plot_buses.append(row[0])
-        live_plot_voltage(plot_buses, plot_values, interval=10)
+    # if plot_voltage:
+    #     plot_buses = []
+    #     for row in net.bus.iterrows():
+    #         if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
+    #             plot_buses.append(row[0])
+    #     live_plot_voltage(plot_buses, plot_values, interval=10)
