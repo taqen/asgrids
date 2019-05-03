@@ -55,8 +55,6 @@ class AsyncCommunication(threading.Thread):
             self._loop.close()
 
     async def _send(self, request: Packet, remote):
-        if not self.running:
-            return
         if remote not in self._clients:
             try:
                 self._clients[remote] = self._context.socket(zmq.DEALER)
