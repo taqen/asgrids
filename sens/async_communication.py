@@ -55,6 +55,8 @@ class AsyncCommunication(threading.Thread):
             self._loop.close()
 
     async def _send(self, request: Packet, remote):
+        if not self.running:
+            return
         if remote not in self._clients:
             try:
                 self._clients[remote] = self._context.socket(zmq.DEALER)
@@ -119,8 +121,11 @@ class AsyncCommunication(threading.Thread):
 
     def send(self, request, remote):
         logger.debug("send {} to {}".format(request, remote))
-        asyncio.run_coroutine_threadsafe(
-            self._send(request=request, remote=remote), self._loop)
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._send(request=request, remote=remote), self._loop)
+        except Exception as e:
+            logger.warning(e)
 
     def stop(self):
         logger.info("Stopping AsyncCommThread")
@@ -128,4 +133,3 @@ class AsyncCommunication(threading.Thread):
         # self._poller.unregister(self._client)
         for remote in self._clients:
             self._clients[remote].close()
-
