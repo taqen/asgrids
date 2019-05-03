@@ -1,5 +1,5 @@
 from queue import Queue, Full, Empty
-from threading import Lock
+from threading import Event, Lock
 from time import monotonic as time, sleep
 from sens import SmartGridSimulation, Allocation, live_plot_voltage, runpp, optimize_network_pi, optimize_network_opf
 from signal import signal, SIGINT
@@ -12,15 +12,16 @@ from copy import deepcopy
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor as Executor
 import argparse
+import logging
 
 addr_to_name: dict = {}
-allocations_queue: Queue = Queue(1000)
+allocations_queue: Queue = Queue()
 measure_queues: dict = {}
 network_size: list = []
-plot_values: Queue = Queue(1000)
-voltage_values: Queue = Queue(1000)
+plot_values: Queue = Queue()
+voltage_values: Queue = Queue()
 allocation_generators: dict = {}
-lock: Lock = Lock()
+lock = Lock()
 
 parser = argparse.ArgumentParser(
     description='Realtime Time multi-agent simulation of CIGRE LV network')
@@ -41,13 +42,18 @@ parser.add_argument('--plot-load', action='store_true',
 parser.add_argument('--optimize-cycle', type=int,
                     help='CSV database with loads timeseries',
                     default=5)
+parser.add_argument('--pp-cycle', type=int,
+                    help='CSV database with loads timeseries',
+                    default=1)
 parser.add_argument('--optimizer', type=str,
                     help='CSV database with loads timeseries',
                     default='pi')
 parser.add_argument('--sim-time', type=float,
                     help='Total simulation time',
                     default=300)
-
+parser.add_argument('--output', type=str,
+                    help='Total simulation time',
+                    default='simulation.log')
 args = parser.parse_args()
 
 with_pv = args.with_pv
@@ -57,24 +63,37 @@ with_optimize = args.optimize
 plot_voltage = args.plot_voltage
 plot_load = args.plot_load
 optimize_cycle = args.optimize_cycle
+pp_cycle = args.pp_cycle
 optimizer = args.optimizer
 simtime = args.sim_time
+output = args.output
+
+logger = None
+if output is not '':
+    logger = logging.getLogger('SmartGridSimulation')
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(output, mode='w')
+    fh.setLevel(logging.INFO)
+    logger.addHandler(fh)
 
 print("WITH PV: {}".format(with_pv))
 if with_optimize:
     print("WITH OPTIMIZER: {}".format(optimizer))
     print("WITH OPTIMIZE CYCLE: {}".format(optimize_cycle))
+print("PP CYCLE: {}".format(pp_cycle))
 print("WITH PLOT: {}".format(plot_voltage))
 print("SIM TIME: {}s".format(simtime))
 
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
-
+terminate = Event()
+terminate.clear()
 # Handle ctrl-c interruptin
 def shutdown(x, y):
     print("Shutdown")
-    allocations_queue.put([0, 0, 0, 0])
-    voltage_values.put([0,0])
+    terminate.set()
+    # allocations_queue.put([0, 0, 0, 0])
+    # voltage_values.put([0,0])
     sim.stop()
 
 
@@ -146,12 +165,17 @@ def allocator_measure_updated(allocation: list, node_addr: str):
         voltage_values.put_nowait([node_addr, v])
     except Full:
         print("voltage_values is full")
+    if logger is not None:
+        logger.info('{}\t{}\t{}\t{}\t{}'.format(
+            time(), addr_to_name[node_addr], allocation[0].p_value, allocation[0].q_value, v))
+
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
     nodes = list()
     for i in range(len(net.load.index)):
         node = sim.create_node('load', '127.0.0.1:{}'.format(next(port)))
+        node.update_measure_period = 1
         node.run()
         measure_queues[node.local] = Queue(maxsize=1)
         node.update_measure_cb = allocation_updated
@@ -176,6 +200,7 @@ allocator = sim.create_node(
     ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
 initial_time = time()
 allocator.identity = allocator.local
+allocator.allocation_updated = allocator_measure_updated
 allocator.run()
 
 net = pp.from_json(JSON_FILE)
@@ -184,6 +209,7 @@ net.load['min_q_kvar'] = None
 net.load['max_p_kw'] = None
 net.load['max_q_kvar'] = None
 net.load['controllable'] = False
+
 
 nodes = create_nodes(net, allocator.local)
 print("waiting for {} nodes to join network".format(len(nodes)))
@@ -202,22 +228,56 @@ for node in nodes:
     node.generate_allocations = generate_allocations
 
 
+def worker_pp(fn, args: list, cycle: float):
+    import sys, traceback
+    while not terminate.is_set():
+        try:
+            lock.acquire()
+            fn(*args)
+            lock.release()
+        except Exception as e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            print("What the fuck at worker_pp:")
+            print(repr(traceback.format_tb(exc_traceback)))
+            return
+        if cycle > 0:
+            sleep(cycle)
 
+def worker_optimize(fn, args: list, cycle: float):
+    import sys, traceback
+    while not terminate.is_set():
+        try:
+            lock.acquire()
+            netcopy = deepcopy(net)
+            lock.release()
+            ARGS = [netcopy] + args
+            fn(*ARGS)
+        except Exception as e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            print("What the fuck at {}:".format(fn))
+            print(repr(traceback.format_tb(exc_traceback)))
+            break
+        if cycle > 0:
+            sleep(cycle)
+    print("Terminating {}".format(fn))
+
+allocator.schedule(shutdown, args=[None, None], delay=simtime)
 with Executor(max_workers=200) as executor:
     try:
-        net_copy = deepcopy(net)
-        executor.submit(runpp, net_copy, allocations_queue, measure_queues, plot_values, with_plot=plot_voltage, initial_time=initial_time, log=True)
+        # net_copy = deepcopy(net)
+        print("Running power flow analysis")
+        executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, None], pp_cycle)
         if with_optimize:
-            net_copy = deepcopy(net)
+            # net_copy = deepcopy(net)
             if optimizer == 'pi':
-                allocator.allocation_updated = allocator_measure_updated
-                executor.submit(optimize_network_pi, net_copy, allocator, voltage_values, duty_cycle=optimize_cycle)
+                print("Optimizing network in realtime with PI")
+                executor.submit(worker_optimize, optimize_network_pi, [allocator, voltage_values, optimize_cycle], optimize_cycle)
             elif optimizer == 'opf':
-                allocator.allocation_updated = allocator_measure_updated
-                executor.submit(optimize_network_opf, net_copy, allocator, voltage_values, duty_cycle=optimize_cycle)
+                print("Optimizing network in realtime with OPF")
+                executor.submit(worker_optimize, optimize_network_opf, [allocator, voltage_values, optimize_cycle], optimize_cycle)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
-        allocator.schedule(shutdown, args=[None, None], delay=simtime)
+
     except Exception as e:
         print(e)
     if plot_voltage:
