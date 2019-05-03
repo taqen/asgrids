@@ -196,12 +196,18 @@ class Agent(object, metaclass=ABCMeta):
         event._value = PENDING
         event.callbacks.append(lambda e: self.logger.debug(
             "executing action{}".format(action)))
-        if args is None:
-            event.callbacks.append(lambda e: action())
-        elif isinstance(args, dict):
-            event.callbacks.append(lambda e: action(**args))
-        elif isinstance(args, list):
-            event.callbacks.append(lambda e: action(*args))
+        def action_worker(event, fn, args):
+            try:
+                if args is None:
+                    action()
+                elif isinstance(args, dict):
+                    action(**args)
+                elif isinstance(args, list):
+                   action(*args)
+            except Exception as e:
+                self.logger.warning("Failed in action_worker for {}".format(action))
+        
+        event.callbacks.append(lambda e: action_worker(event, action, args))       
         for callback in callbacks:
             event.callbacks.append(lambda e: callback())
 
