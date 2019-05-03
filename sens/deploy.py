@@ -11,7 +11,7 @@ from plumbum import SshMachine
 from rpyc.utils.classic import deliver, teleport_function
 from rpyc.utils.helpers import BgServingThread
 from rpyc.utils.zerodeploy import DeployedServer
-from queue import Queue, Full
+from queue import Queue, Full, Empty
 from time import time, sleep
 from pandapower import pp, OPFNotConverged, LoadflowNotConverged
 from .network_allocator import NetworkAllocator
@@ -195,7 +195,7 @@ def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue
 
     converged = True
     try:
-        pp.runpp(net, init='results', verbose=False)
+        pp.runpp(net, init='results', verbose=True)
     except LoadflowNotConverged as e:
         print("runpp failed miserably: {}".format(e))
         return
@@ -222,9 +222,8 @@ def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue
         vm_pu = 0
         vm_pu = net.res_bus['vm_pu'][bus_ind].item()
         try:
-            measure_queues[node].put_nowait(vm_pu)
-        except Full:
-            measure_queues[node].get()
+            measure_queues[node].get_nowait()
+        except Empty:
             measure_queues[node].put(vm_pu)
         # print("\nVotage at bus {}: {}\n".format(bus_ind, vm_pu))
     if with_plot:
@@ -259,7 +258,7 @@ def optimize_network_opf(net, allocator, voltage_values, duty_cycle=10):
         if nid == v == 0:
             print("Terminating optimize_network_opf")
             return
-        if v >= 1.05 or v <= 0.95:
+        if v >= 1.04 or v <= 0.94:
             optimize = True
     
     if not optimize:
@@ -295,7 +294,7 @@ def optimize_network_opf(net, allocator, voltage_values, duty_cycle=10):
             raise(e)
 
 def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
-    controller = PIController(maximum_voltage=400*1.05, duration=duty_cycle)
+    controller = PIController(maximum_voltage=400*1.04, duration=duty_cycle)
     nids = []
     gen_vs: list = []  # List of generators(PV) current voltages
     load_vs: list = []  # List of non-generators current voltages
@@ -319,9 +318,9 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
     if len(values) > 0:
         print("Optimizing {} nodes".format(len(values)))
     for nid, v in values.items():
-        if v >= 1.05:
+        if v >= 1.04:
             print("Node {} above max threshold".format(nid))
-        elif v  <= 0.95:
+        elif v  <= 0.94:
             print("node {} under min threshold".format(nid))
         # We wanna know the actual voltage of the bus
         # if nid in net.load['name'].tolist():
@@ -374,241 +373,241 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
     values = {}
 
 
-def live_plot_voltage(buses, plot_values, interval=10):
-    from math import ceil, sqrt
-    from matplotlib import pyplot as plt, animation
-    import numpy as np
+# def live_plot_voltage(buses, plot_values, interval=10):
+#     from math import ceil, sqrt
+#     from matplotlib import pyplot as plt, animation
+#     import numpy as np
 
-    fig = plt.figure()
-    ax = {}
-    lines = {}
-    min_lines = {}
-    max_lines = {}
-    grid_dim = ceil(sqrt(len(buses)))
-    i = 1
-    for bus in buses:
-        ax[bus] = plt.subplot(grid_dim, grid_dim, i)
-        lines[bus] = ax[bus].plot([], [])[0]
-        min_lines[bus] = ax[bus].plot([], [], color='red')[0]
-        max_lines[bus] = ax[bus].plot([], [], color='red')[0]
-        i = i + 1
-    plt.subplots_adjust(hspace=0.7, bottom=0.2)
+#     fig = plt.figure()
+#     ax = {}
+#     lines = {}
+#     min_lines = {}
+#     max_lines = {}
+#     grid_dim = ceil(sqrt(len(buses)))
+#     i = 1
+#     for bus in buses:
+#         ax[bus] = plt.subplot(grid_dim, grid_dim, i)
+#         lines[bus] = ax[bus].plot([], [])[0]
+#         min_lines[bus] = ax[bus].plot([], [], color='red')[0]
+#         max_lines[bus] = ax[bus].plot([], [], color='red')[0]
+#         i = i + 1
+#     plt.subplots_adjust(hspace=0.7, bottom=0.2)
 
-    def init():
-        try:
-            for bus, a in ax.items():
-                min_value = 0.95
-                max_value = 1.05
-                a.set_title('voltage value (p.u.) - bus {}'.format(bus))
-                a.set_ylim([min_value*0.99, max_value*1.01])
+#     def init():
+#         try:
+#             for bus, a in ax.items():
+#                 min_value = 0.94
+#                 max_value = 1.04
+#                 a.set_title('voltage value (p.u.) - bus {}'.format(bus))
+#                 a.set_ylim([min_value*0.99, max_value*1.01])
 
-                lines[bus].set_data([], [])
-                min_lines[bus].set_data([0], [min_value])
-                max_lines[bus].set_data([0], [max_value])
-        except Exception as e:
-            print("Error at live_plot init {}".format(e))
+#                 lines[bus].set_data([], [])
+#                 min_lines[bus].set_data([0], [min_value])
+#                 max_lines[bus].set_data([0], [max_value])
+#         except Exception as e:
+#             print("Error at live_plot init {}".format(e))
 
-        artists = [line for _, line in lines.items()]
-        artists = artists + [line for _, line in min_lines.items()]
-        artists = artists + [line for _, line in max_lines.items()]
-        artists = artists + [a for _, ax in ax.items()]
+#         artists = [line for _, line in lines.items()]
+#         artists = artists + [line for _, line in min_lines.items()]
+#         artists = artists + [line for _, line in max_lines.items()]
+#         artists = artists + [a for _, ax in ax.items()]
 
-        return artists
+#         return artists
 
-    def data_gen():
-        while True:
-            timestamp = {}
-            value = {}
-            try:
-                qsize = plot_values.qsize()
-                if qsize == 0:
-                    yield None, None
-                for _ in range(qsize):
-                    t, b, v = plot_values.get_nowait()
-                    if b not in buses:
-                        continue
-                    else:
-                        if b not in value:
-                            timestamp[b] = []
-                            value[b] = []
-                        timestamp[b].append(t)
-                        value[b].append(v)
-            except Exception as e:
-                print(e)
-                raise e
-            if timestamp == 0:
-                break
-            yield timestamp, value
+#     def data_gen():
+#         while True:
+#             timestamp = {}
+#             value = {}
+#             try:
+#                 qsize = plot_values.qsize()
+#                 if qsize == 0:
+#                     yield None, None
+#                 for _ in range(qsize):
+#                     t, b, v = plot_values.get_nowait()
+#                     if b not in buses:
+#                         continue
+#                     else:
+#                         if b not in value:
+#                             timestamp[b] = []
+#                             value[b] = []
+#                         timestamp[b].append(t)
+#                         value[b].append(v)
+#             except Exception as e:
+#                 print(e)
+#                 raise e
+#             if timestamp == 0:
+#                 break
+#             yield timestamp, value
 
-    def animate(data):
-        t, v = data
-        artists = []
-        if t is None:
-            return artists
-        try:
-            for bus_id in v:
-                xmin, xmax = ax[bus_id].get_xlim()
-                ymin, ymax = ax[bus_id].get_ylim()
-                if len(lines[bus_id].get_ydata()) == 0:
-                    ax[bus_id].set_xlim(max(t[bus_id]), 2 * max(t[bus_id]))
-                    ax[bus_id].relim()
-                if max(t[bus_id]) >= xmax:
-                    ax[bus_id].set_xlim(xmin, max(t[bus_id]) + 1)
-                    ax[bus_id].relim()
-                if max(v[bus_id]) >= ymax:
-                    ax[bus_id].set_ylim(ymin, max(v[bus_id]) + 0.005)
-                    ax[bus_id].relim()
-                if min(v[bus_id]) <= ymin:
-                    ax[bus_id].set_ylim(min(v[bus_id]) - 0.005, ymax)
-                    ax[bus_id].relim()
+#     def animate(data):
+#         t, v = data
+#         artists = []
+#         if t is None:
+#             return artists
+#         try:
+#             for bus_id in v:
+#                 xmin, xmax = ax[bus_id].get_xlim()
+#                 ymin, ymax = ax[bus_id].get_ylim()
+#                 if len(lines[bus_id].get_ydata()) == 0:
+#                     ax[bus_id].set_xlim(max(t[bus_id]), 2 * max(t[bus_id]))
+#                     ax[bus_id].relim()
+#                 if max(t[bus_id]) >= xmax:
+#                     ax[bus_id].set_xlim(xmin, max(t[bus_id]) + 1)
+#                     ax[bus_id].relim()
+#                 if max(v[bus_id]) >= ymax:
+#                     ax[bus_id].set_ylim(ymin, max(v[bus_id]) + 0.005)
+#                     ax[bus_id].relim()
+#                 if min(v[bus_id]) <= ymin:
+#                     ax[bus_id].set_ylim(min(v[bus_id]) - 0.005, ymax)
+#                     ax[bus_id].relim()
 
-                xdata = np.append(lines[bus_id].get_xdata(), t[bus_id])
-                ydata = np.append(lines[bus_id].get_ydata(), v[bus_id])
-                lines[bus_id].set_data(xdata, ydata)
+#                 xdata = np.append(lines[bus_id].get_xdata(), t[bus_id])
+#                 ydata = np.append(lines[bus_id].get_ydata(), v[bus_id])
+#                 lines[bus_id].set_data(xdata, ydata)
 
-                xdata = min_lines[bus_id].get_xdata()
-                ydata = min_lines[bus_id].get_ydata()
+#                 xdata = min_lines[bus_id].get_xdata()
+#                 ydata = min_lines[bus_id].get_ydata()
 
-                min_lines[bus_id].set_data(np.append(xdata, t[bus_id]), np.append(
-                    ydata, [ydata[0]]*len(t[bus_id])))
+#                 min_lines[bus_id].set_data(np.append(xdata, t[bus_id]), np.append(
+#                     ydata, [ydata[0]]*len(t[bus_id])))
 
-                xdata = max_lines[bus_id].get_xdata()
-                ydata = max_lines[bus_id].get_ydata()
-                max_lines[bus_id].set_data(np.append(xdata, t[bus_id]), np.append(
-                    ydata, [ydata[0]]*len(t[bus_id])))
+#                 xdata = max_lines[bus_id].get_xdata()
+#                 ydata = max_lines[bus_id].get_ydata()
+#                 max_lines[bus_id].set_data(np.append(xdata, t[bus_id]), np.append(
+#                     ydata, [ydata[0]]*len(t[bus_id])))
 
-            artists = artists + [line for _, line in lines.items()]
-            artists = artists + [line for _, line in max_lines.items()]
-            artists = artists + [line for _, line in min_lines.items()]
-            artists = artists + [a for _, a in ax.items()]
-        except Exception as e:
-            print("Exception when filling lines {}".format(e))
-        return artists
+#             artists = artists + [line for _, line in lines.items()]
+#             artists = artists + [line for _, line in max_lines.items()]
+#             artists = artists + [line for _, line in min_lines.items()]
+#             artists = artists + [a for _, a in ax.items()]
+#         except Exception as e:
+#             print("Exception when filling lines {}".format(e))
+#         return artists
 
-    anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
-                                   interval=interval, blit=False, repeat=False)
-    try:
-        plt.autoscale(True)
-        plt.show()
-    except Exception as e:
-        print("Error at plt.show {}".format(e))
+#     anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
+#                                    interval=interval, blit=False, repeat=False)
+#     try:
+#         plt.autoscale(True)
+#         plt.show()
+#     except Exception as e:
+#         print("Error at plt.show {}".format(e))
 
 
-def live_plot_load(loads, plot_values, interval=10):
-    from math import ceil, sqrt
-    from matplotlib import pyplot as plt, animation
-    import numpy as np
+# def live_plot_load(loads, plot_values, interval=10):
+#     from math import ceil, sqrt
+#     from matplotlib import pyplot as plt, animation
+#     import numpy as np
 
-    fig = plt.figure()
-    ax = {}
-    lines = {}
-    min_lines = {}
-    max_lines = {}
-    grid_dim = ceil(sqrt(len(loads)))
-    i = 1
-    for load in loads:
-        ax[load] = plt.subplot(grid_dim, grid_dim, i)
-        lines[load] = ax[load].plot([], [])[0]
-        min_lines[load] = ax[load].plot([], [], color='red')[0]
-        max_lines[load] = ax[load].plot([], [], color='red')[0]
-        i = i + 1
-    plt.subplots_adjust(hspace=0.7, bottom=0.2)
+#     fig = plt.figure()
+#     ax = {}
+#     lines = {}
+#     min_lines = {}
+#     max_lines = {}
+#     grid_dim = ceil(sqrt(len(loads)))
+#     i = 1
+#     for load in loads:
+#         ax[load] = plt.subplot(grid_dim, grid_dim, i)
+#         lines[load] = ax[load].plot([], [])[0]
+#         min_lines[load] = ax[load].plot([], [], color='red')[0]
+#         max_lines[load] = ax[load].plot([], [], color='red')[0]
+#         i = i + 1
+#     plt.subplots_adjust(hspace=0.7, bottom=0.2)
 
-    def init():
-        try:
-            for bus, a in ax.items():
-                min_value = 0.95
-                max_value = 1.05
-                a.set_title('load value (kW) - load {}'.format(bus))
-                a.set_ylim([min_value*0.99, max_value*1.01])
+#     def init():
+#         try:
+#             for bus, a in ax.items():
+#                 min_value = 0.94
+#                 max_value = 1.04
+#                 a.set_title('load value (kW) - load {}'.format(bus))
+#                 a.set_ylim([min_value*0.99, max_value*1.01])
 
-                lines[bus].set_data([], [])
-                min_lines[bus].set_data([0], [min_value])
-                max_lines[bus].set_data([0], [max_value])
-        except Exception as e:
-            print("Error at live_plot init {}".format(e))
+#                 lines[bus].set_data([], [])
+#                 min_lines[bus].set_data([0], [min_value])
+#                 max_lines[bus].set_data([0], [max_value])
+#         except Exception as e:
+#             print("Error at live_plot init {}".format(e))
 
-        artists = [line for _, line in lines.items()]
-        artists = artists + [line for _, line in min_lines.items()]
-        artists = artists + [line for _, line in max_lines.items()]
-        artists = artists + [a for _, ax in ax.items()]
+#         artists = [line for _, line in lines.items()]
+#         artists = artists + [line for _, line in min_lines.items()]
+#         artists = artists + [line for _, line in max_lines.items()]
+#         artists = artists + [a for _, ax in ax.items()]
 
-        return artists
+#         return artists
 
-    def data_gen():
-        while True:
-            timestamp = {}
-            value = {}
-            try:
-                qsize = plot_values.qsize()
-                if qsize == 0:
-                    yield None, None
-                for _ in range(qsize):
-                    t, b, v = plot_values.get_nowait()
-                    if b not in buses:
-                        continue
-                    else:
-                        if b not in value:
-                            timestamp[b] = []
-                            value[b] = []
-                        timestamp[b].append(t)
-                        value[b].append(v)
-            except Exception as e:
-                print(e)
-                raise e
-            if timestamp == 0:
-                break
-            yield timestamp, value
+#     def data_gen():
+#         while True:
+#             timestamp = {}
+#             value = {}
+#             try:
+#                 qsize = plot_values.qsize()
+#                 if qsize == 0:
+#                     yield None, None
+#                 for _ in range(qsize):
+#                     t, b, v = plot_values.get_nowait()
+#                     if b not in buses:
+#                         continue
+#                     else:
+#                         if b not in value:
+#                             timestamp[b] = []
+#                             value[b] = []
+#                         timestamp[b].append(t)
+#                         value[b].append(v)
+#             except Exception as e:
+#                 print(e)
+#                 raise e
+#             if timestamp == 0:
+#                 break
+#             yield timestamp, value
 
-    def animate(data):
-        t, v = data
-        artists = []
-        if t is None:
-            return artists
-        try:
-            for lid in v:
-                xmin, xmax = ax[lid].get_xlim()
-                ymin, ymax = ax[lid].get_ylim()
-                if len(lines[lid].get_ydata()) == 0:
-                    ax[lid].set_xlim(max(t[lid]), 2 * max(t[lid]))
-                    ax[lid].relim()
-                if max(t[bus_id]) >= xmax:
-                    ax[lid].set_xlim(xmin, max(t[lid]) + 1)
-                    ax[lid].relim()
-                if max(v[lid]) >= ymax:
-                    ax[lid].set_ylim(ymin, max(v[lid]) + 0.005)
-                    ax[lid].relim()
-                if min(v[lid]) <= ymin:
-                    ax[lid].set_ylim(min(v[lid]) - 0.005, ymax)
-                    ax[lid].relim()
+#     def animate(data):
+#         t, v = data
+#         artists = []
+#         if t is None:
+#             return artists
+#         try:
+#             for lid in v:
+#                 xmin, xmax = ax[lid].get_xlim()
+#                 ymin, ymax = ax[lid].get_ylim()
+#                 if len(lines[lid].get_ydata()) == 0:
+#                     ax[lid].set_xlim(max(t[lid]), 2 * max(t[lid]))
+#                     ax[lid].relim()
+#                 if max(t[bus_id]) >= xmax:
+#                     ax[lid].set_xlim(xmin, max(t[lid]) + 1)
+#                     ax[lid].relim()
+#                 if max(v[lid]) >= ymax:
+#                     ax[lid].set_ylim(ymin, max(v[lid]) + 0.005)
+#                     ax[lid].relim()
+#                 if min(v[lid]) <= ymin:
+#                     ax[lid].set_ylim(min(v[lid]) - 0.005, ymax)
+#                     ax[lid].relim()
 
-                xdata = np.append(lines[lid].get_xdata(), t[lid])
-                ydata = np.append(lines[lid].get_ydata(), v[lid])
-                lines[lid].set_data(xdata, ydata)
+#                 xdata = np.append(lines[lid].get_xdata(), t[lid])
+#                 ydata = np.append(lines[lid].get_ydata(), v[lid])
+#                 lines[lid].set_data(xdata, ydata)
 
-                xdata = min_lines[lid].get_xdata()
-                ydata = min_lines[lid].get_ydata()
+#                 xdata = min_lines[lid].get_xdata()
+#                 ydata = min_lines[lid].get_ydata()
 
-                min_lines[lid].set_data(np.append(xdata, t[lid]), np.append(
-                    ydata, [ydata[0]]*len(t[lid])))
+#                 min_lines[lid].set_data(np.append(xdata, t[lid]), np.append(
+#                     ydata, [ydata[0]]*len(t[lid])))
 
-                xdata = max_lines[lid].get_xdata()
-                ydata = max_lines[lid].get_ydata()
-                max_lines[lid].set_data(np.append(xdata, t[lid]), np.append(
-                    ydata, [ydata[0]]*len(t[lid])))
+#                 xdata = max_lines[lid].get_xdata()
+#                 ydata = max_lines[lid].get_ydata()
+#                 max_lines[lid].set_data(np.append(xdata, t[lid]), np.append(
+#                     ydata, [ydata[0]]*len(t[lid])))
 
-            artists = artists + [line for _, line in lines.items()]
-            artists = artists + [line for _, line in max_lines.items()]
-            artists = artists + [line for _, line in min_lines.items()]
-            artists = artists + [a for _, a in ax.items()]
-        except Exception as e:
-            print("Exception when filling lines {}".format(e))
-        return artists
+#             artists = artists + [line for _, line in lines.items()]
+#             artists = artists + [line for _, line in max_lines.items()]
+#             artists = artists + [line for _, line in min_lines.items()]
+#             artists = artists + [a for _, a in ax.items()]
+#         except Exception as e:
+#             print("Exception when filling lines {}".format(e))
+#         return artists
 
-    anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
-                                   interval=interval, blit=False, repeat=False)
-    try:
-        plt.autoscale(True)
-        plt.show()
-    except Exception as e:
-        print("Error at plt.show {}".format(e))
+#     anim = animation.FuncAnimation(fig, animate, data_gen, init_func=init,
+#                                    interval=interval, blit=False, repeat=False)
+#     try:
+#         plt.autoscale(True)
+#         plt.show()
+#     except Exception as e:
+#         print("Error at plt.show {}".format(e))
