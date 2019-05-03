@@ -13,24 +13,24 @@ from rpyc.utils.helpers import BgServingThread
 from rpyc.utils.zerodeploy import DeployedServer
 from queue import Queue, Full
 from time import time, sleep
-from pandapower import pp
-
+from pandapower import pp, OPFNotConverged, LoadflowNotConverged
 from .network_allocator import NetworkAllocator
 from .network_load import NetworkLoad
 from .defs import Allocation
 from .controller import PIController
 import logging
+import sys, traceback
 
 # logging.basicConfig(filename='simulation.log',
 #                             filemode='a',
 #                             format='%(message)s',
 #                             # datefmt='%H:%M:%S',
 #                             level=logging.DEBUG)
-logger = logging.getLogger('SmartGridSimulation')
-logger.setLevel(logging.INFO)
-fh = logging.FileHandler('simulation.log')
-fh.setLevel(logging.INFO)
-logger.addHandler(fh)
+# logger = logging.getLogger('SmartGridSimulation')
+# logger.setLevel(logging.INFO)
+# fh = logging.FileHandler('simulation.log', mode='w')
+# fh.setLevel(logging.INFO)
+# logger.addHandler(fh)
 
 
 class SmartGridSimulation(object):
@@ -157,7 +157,7 @@ class SmartGridSimulation(object):
         self.shutdown = True
 
 
-def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue, with_plot=False, initial_time=0, log=False):
+def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue, with_plot=False, initial_time=0, logger=None):
     """Perform power flow analysis to collect voltage values of all the buses
     
     Args:
@@ -168,188 +168,210 @@ def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue
         with_plot (bool, optional): Defaults to False. Whether or not to generate plot values
         initial_time (int, optional): Defaults to 0.
     """
-
-    while True:
+    qsize = allocations_queue.qsize()
+        # print("runpp: updating {} new allocations".format(qsize))
+    for i in range(qsize):
         try:
-            qsize = allocations_queue.qsize()
-            # print("runpp: updating {} new allocations".format(qsize))
-            for i in range(qsize):
-                timestamp, name, p_kw, q_kw = allocations_queue.get()
-                if timestamp == name == p_kw == q_kw == 0:
-                    print("Terminating runpp")
-                    return
+            timestamp, name, p_kw, q_kw = allocations_queue.get()
+        except Exception as e:
+            print("Error getting allocation from queue: {}".format(e))
+            raise(e)
+        if timestamp == name == p_kw == q_kw == 0:
+            print("Terminating runpp")
+            return
+        try:
+            if name in net.sgen['name'].tolist():
+                net.sgen.loc[net.sgen['name'] == name, 'p_kw'] = p_kw
+                net.sgen.loc[net.sgen['name'] == name, 'q_kw'] = q_kw
+            elif  name in net.load['name'].tolist():
                 net.load.loc[net.load['name'] == name, 'p_kw'] = p_kw
                 net.load.loc[net.load['name'] == name, 'q_kw'] = q_kw
-                if log:
-                    logger.info('{}\tload_{}\t{}\t{}'.format(
-                        timestamp, name, p_kw, q_kw))
-
         except Exception as e:
-            print(e)
-        converged = True
+            print("Error setting p,q values from net: {}")
+            raise(e)
+        if logger is not None:
+            logger.info('{}\tload_{}\t{}\t{}'.format(
+                timestamp, name, p_kw, q_kw))
+
+    converged = True
+    try:
+        pp.runpp(net, init='results', verbose=False)
+    except LoadflowNotConverged as e:
+        print("runpp failed miserably: {}".format(e))
+        return
+    except Exception as e:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        print("What the fuck at runpp:")
+        print("*** format_tb:")
+        print(repr(traceback.format_tb(exc_traceback)))
+        return
+
+
+    # Updating voltage measures for clients and live_plot
+    for node in measure_queues:
+        bus_ind = 0
         try:
-            pp.runpp(net, init_vm_pu='results', verbose=True)
-        except Exception as e:
-            print(e)
-            converged = False
-
-        # Updating voltage measures for clients and live_plot
-        if converged:
-            for node in measure_queues:
+            if node in net.sgen['name'].tolist():
+                bus_ind = net.load['bus'][net.sgen['name'] == node].item()
+            elif node in net.load['name'].tolist():
                 bus_ind = net.load['bus'][net.load['name'] == node].item()
-                vm_pu = 0
-                vm_pu = net.res_bus['vm_pu'][bus_ind].item()
-                try:
-                    measure_queues[node].put_nowait(vm_pu)
-                except Full:
-                    measure_queues[node].get()
-                    measure_queues[node].put(vm_pu)
-                # print("\nVotage at bus {}: {}\n".format(bus_ind, vm_pu))
-            if with_plot:
-                try:
-                    for row in net.res_bus.iterrows():
-                        if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-                            plot_queue.put_nowait(
-                                [time()-initial_time, row[0], row[1][0].item()])
-                except Full:
-                    print("plot_queue is full")
-                    plot_queue.get()
-                    plot_queue.put([time(), row[0], row[1][0].item()])
-                except Exception as e:
-                    print(e)
-                    raise(e)
-
-            if log:
-                for row in net.res_bus.iterrows():
-                    if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-                        logger.info('{}\tbus_{}\t{}\t{}'.format(
-                            time(), row[0], row[1][0].item(), 0))
-
-
-def optimize_network_opf(net, allocator, voltage_values=None, duty_cycle=10):
-    print("Optimizing network in realtime with OPF")
-    while True:
-        qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
-        optimize = False
+            else:
+                raise(ValueError)
+        except Exception as e:
+            raise(e)
+        vm_pu = 0
+        vm_pu = net.res_bus['vm_pu'][bus_ind].item()
         try:
-            for _ in range(qsize):
-                nid, v = voltage_values.get()
-                if nid == v == 0:
-                    print("Terminating optimize_network_opf")
-                    return
-                if v >= 1.05:
-                    optimize = True
-            if not optimize:
-                sleep(duty_cycle)
-                continue
+            measure_queues[node].put_nowait(vm_pu)
+        except Full:
+            measure_queues[node].get()
+            measure_queues[node].put(vm_pu)
+        # print("\nVotage at bus {}: {}\n".format(bus_ind, vm_pu))
+    if with_plot:
+        try:
+            for row in net.res_bus.iterrows():
+                if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
+                    plot_queue.put_nowait(
+                        [time()-initial_time, row[0], row[1][0].item()])
+        except Full:
+            print("plot_queue is full")
+            plot_queue.get()
+            plot_queue.put([time(), row[0], row[1][0].item()])
         except Exception as e:
             print(e)
+            raise(e)
 
+    if logger is not None:
+        for row in net.res_bus.iterrows():
+            if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
+                logger.info('{}\tbus_{}\t{}\t{}'.format(
+                    time(), row[0], row[1][0].item(), 0))
+
+
+def optimize_network_opf(net, allocator, voltage_values, duty_cycle=10):
+    qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
+    optimize = False
+    for _ in range(qsize):
+        try:
+            nid, v = voltage_values.get()
+        except Exception as e:
+            print("Error getting voltage value from queue: {}".format(e))
+        if nid == v == 0:
+            print("Terminating optimize_network_opf")
+            return
+        if v >= 1.05 or v <= 0.95:
+            optimize = True
+    
+    if not optimize:
+        return
+    
+    try:
         pp.runopp(net, verbose=False)
+    except OPFNotConverged as e:
+        print("Runopp failed: {}".format(e))
+        return
+    except Exception as e:
+        print("What the fuck: {}: {}".format(type(e).__name__, e.args))
+    try:
+        c_loads = net.load[net.load['controllable'] == True]
+    except Exception as e:
+        print("Error getting list of controllable loads: {}".format(e))
+
+    print("optimizing {} nodes".format(len(c_loads.index)))
+    for row in c_loads.iterrows():
         try:
-            c_loads = net.load[net.load['controllable'] == True]
+            p = net.res_load['p_kw'][row[0]].item()
+            q = net.res_load['q_kvar'][row[0]].item()
+            name = row[1]['name']
         except Exception as e:
-            print(e)
-
-        print("optimizing {} nodes".format(len(c_loads.index)))
-        for row in c_loads.iterrows():
-            try:
-                p = net.res_load['p_kw'][row[0]].item()
-                q = net.res_load['q_kvar'][row[0]].item()
-                name = row[1]['name']
-            except Exception as e:
-                print("Error in optimize network: {}".format(e))
-            try:
-                allocation = Allocation(0, p, q, duty_cycle)
-                allocator.send_allocation(nid=name, allocation=allocation)
-            except Exception as e:
-                print("Error scheduing allocation: {}".format(e))
-                print("Terminating OPF controller")
-                break
-        sleep(duty_cycle)
-
+            print("Error in opf, couldn't read p,q from net.res_load: {}".format(e))
+            raise(e)
+        try:
+            allocation = Allocation(0, p, q, duty_cycle)
+            allocator.send_allocation(nid=name, allocation=allocation)
+        except Exception as e:
+            print("Error scheduing allocation: {}".format(e))
+            print("Terminating OPF controller")
+            raise(e)
 
 def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
-    print("Optimizing network in realtime with PI")
     controller = PIController(maximum_voltage=400*1.05, duration=duty_cycle)
+    nids = []
+    gen_vs: list = []  # List of generators(PV) current voltages
+    load_vs: list = []  # List of non-generators current voltages
+    load_max_as: list = []  # List of maximum allocations allowed for non-generators
+    # while len(net.load['name'].tolist()) < len(gen_vs) + len(load_vs):
+    qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
+    values: dict = {}
+    # Some measures could be updates for the same nodes
+    # We only take the most recent measures
+    # We also clean up the queue along the way
     try:
-        # Listing all controllable loads, these are the PV generators that will be optimized
-        pv_gens = net.load.loc[net.load['controllable']
-                               == True]['name'].tolist()
+        for _ in range(qsize):
+            nid, v = voltage_values.get()
+            if nid == v == 0:
+                print("Terminating optimize_network_pi")
+                return
+            values[nid] = v
     except Exception as e:
         print(e)
 
-    while True:
-        nids = []
-        gen_vs: list = []  # List of generators(PV) current voltages
-        load_vs: list = []  # List of non-generators current voltages
-        load_max_as: list = []  # List of maximum allocations allowed for non-generators
-        # while len(net.load['name'].tolist()) < len(gen_vs) + len(load_vs):
-        qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
-        values: dict = {}
-        # Some measures could be updates for the same nodes
-        # We only take the most recent measures
-        # We also clean up the queue along the way
+    if len(values) > 0:
+        print("Optimizing {} nodes".format(len(values)))
+    for nid, v in values.items():
+        if v >= 1.05:
+            print("Node {} above max threshold".format(nid))
+        elif v  <= 0.95:
+            print("node {} under min threshold".format(nid))
+        # We wanna know the actual voltage of the bus
+        # if nid in net.load['name'].tolist():
+        #     bus_id = net.load.loc[net.load['name'] == nid, 'bus'].item()
+        # elif nid in net.sgen['name'].tolist():
+        #     bus_id = net.sgen.loc[net.sgen['name'] == nid, 'bus'].item()
+        #bus_vn = net.bus['vn_kv'][bus_id].item()*1e3
+        bus_vn = 400  # v
         try:
-            for _ in range(qsize):
-                nid, v = voltage_values.get()
-                if nid == v == 0:
-                    print("Terminating optimize_network_pi")
-                    return
-                values[nid] = v
+            # Listing all controllable loads, these are the PV generators that will be optimized
+            pv_gens = net.sgen.loc[net.load['controllable']
+                                == True]['name'].tolist()
         except Exception as e:
             print(e)
-
-        if len(values) > 0:
-            print("Optimizing {} nodes".format(len(values)))
-        for nid, v in values.items():
-            if v >= 1.05:
-                print("Node {} above threshold".format(nid))
+        
+        if nid in pv_gens:
+            nids.append(nid)
+            # converting nominal values to absolute values in V
+            gen_vs.append(v*bus_vn)
+        else:
+            # converting nominal values to absolute values in V
+            load_vs.append(v*bus_vn)
             try:
-                # We wanna know the actual voltage of the bus
-                bus_id = net.load.loc[net.load['name'] == nid, 'bus'].item()
-                #bus_vn = net.bus['vn_kv'][bus_id].item()*1e3
-                bus_vn = 400  # v
+                # Using loads (non-generators) allocations from net as their maximum allocations (shouldn't have big effect)
+                # Maximum allocation for generators are -30kW
+                load_max_as.append(
+                    net.load.loc[net.load['name'] == nid, 'p_kw'].item()*1e3)
             except Exception as e:
-                print("Error getting bus vn: {}".format(e))
-            if nid in pv_gens:
-                nids.append(nid)
-                # converting nominal values to absolute values in V
-                gen_vs.append(v*bus_vn)
-            else:
-                # converting nominal values to absolute values in V
-                load_vs.append(v*bus_vn)
-                try:
-                    # Using loads (non-generators) allocations from net as their maximum allocations (shouldn't have big effect)
-                    # Maximum allocation for generators are -30kW
-                    load_max_as.append(
-                        net.load.loc[net.load['name'] == nid, 'p_kw'].item()*1e3)
-                except Exception as e:
-                    print(e)
-        try:
-            if len(gen_vs) > 0:
-                # print("Optimizing {}".format([nid for nid in nids]))
-                _, pv_a = controller.generate_allocations(
-                    load_vs, gen_vs, load_max_as, [-30e3]*len(gen_vs))
-                # print(len(pv_a))
-            else:
-                continue
-        except Exception as e:
-            print("Error generating allocations: {}".format(e))
-            raise e
-        # print("optimizing {}".format(nid))
-        try:
-            for a, nid in zip(pv_a, nids):
-                allocation = Allocation(
-                    a.aid, a.p_value/1e3, a.q_value/1e3, duty_cycle)
-                allocator.send_allocation(nid=nid, allocation=allocation)
-        except Exception as e:
-            print(e)
-            print("Terminating PI controller")
-            break
-        values = {}
-        if duty_cycle > 0:
-            sleep(duty_cycle)
+                print(e)
+    try:
+        if len(gen_vs) > 0:
+            # print("Optimizing {}".format([nid for nid in nids]))
+            _, pv_a = controller.generate_allocations(
+                load_vs, gen_vs, load_max_as, [-30e3]*len(gen_vs))
+            # print(len(pv_a))
+        else:
+            return
+    except Exception as e:
+        print("Error generating allocations: {}".format(e))
+        raise e
+    # print("optimizing {}".format(nid))
+    try:
+        for a, nid in zip(pv_a, nids):
+            allocation = Allocation(
+                a.aid, a.p_value/1e3, a.q_value/1e3, duty_cycle)
+            allocator.send_allocation(nid=nid, allocation=allocation)
+    except Exception as e:
+        print(e)
+        print("Terminating PI controller")
+    values = {}
 
 
 def live_plot_voltage(buses, plot_values, interval=10):
