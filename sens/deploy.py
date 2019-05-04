@@ -258,7 +258,7 @@ def optimize_network_opf(net, allocator, voltage_values, duty_cycle=10):
         if nid == v == 0:
             print("Terminating optimize_network_opf")
             return
-        if v >= 1.04 or v <= 0.94:
+        if v >= 1.04 or v <= 0.96:
             optimize = True
     
     if not optimize:
@@ -320,7 +320,7 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
     for nid, v in values.items():
         if v >= 1.04:
             print("Node {} above max threshold".format(nid))
-        elif v  <= 0.94:
+        elif v  <= 0.96:
             print("node {} under min threshold".format(nid))
         # We wanna know the actual voltage of the bus
         # if nid in net.load['name'].tolist():
@@ -396,7 +396,7 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
 #     def init():
 #         try:
 #             for bus, a in ax.items():
-#                 min_value = 0.94
+#                 min_value = 0.96
 #                 max_value = 1.04
 #                 a.set_title('voltage value (p.u.) - bus {}'.format(bus))
 #                 a.set_ylim([min_value*0.99, max_value*1.01])
@@ -516,7 +516,7 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
 #     def init():
 #         try:
 #             for bus, a in ax.items():
-#                 min_value = 0.94
+#                 min_value = 0.96
 #                 max_value = 1.04
 #                 a.set_title('load value (kW) - load {}'.format(bus))
 #                 a.set_ylim([min_value*0.99, max_value*1.01])
