@@ -68,6 +68,9 @@ optimizer = args.optimizer
 simtime = args.sim_time
 output = args.output
 
+
+# logger_a will log all allocations and measurements received by the allocator
+# logger_b will log all allocations and measurements known by each node
 logger_a = None
 logger_n = None
 
