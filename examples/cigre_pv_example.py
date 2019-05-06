@@ -68,13 +68,20 @@ optimizer = args.optimizer
 simtime = args.sim_time
 output = args.output
 
-logger = None
+logger_a = None
+logger_n = None
+
 if output is not '':
-    logger = logging.getLogger('SmartGridSimulation')
-    logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(output, mode='w')
-    fh.setLevel(logging.INFO)
-    logger.addHandler(fh)
+    logger_a = logging.getLogger('SmartGridSimulationA')
+    logger_a.setLevel(logging.INFO)
+    logger_n = logging.getLogger('SmartGridSimulationN')
+    logger_n.setLevel(logging.INFO)
+    fh_a = logging.FileHandler(output.split('log')[0] +'a.log', mode='w')
+    fh_a.setLevel(logging.INFO)
+    fh_n = logging.FileHandler(output.split('log')[0] + 'b.log', mode='w')
+    fh_n.setLevel(logging.INFO)
+    logger_a.addHandler(fh_a)
+    logger_n.addHandler(fh_n)
 
 print("WITH PV: {}".format(with_pv))
 if with_optimize:
@@ -151,7 +158,11 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     try:
         allocations_queue.put(
             [timestamp, node_addr, allocation.p_value, allocation.q_value])
-        return measure_queues[node_addr].get_nowait()
+        measure = measure_queues[node_addr].get_nowait()
+        if logger_n is not None:
+            logger_n.info('{}\t{}\t{}\t{}\t{}'.format(
+                time(), addr_to_name[node_addr], allocation.p_value, allocation.q_value, measure))
+        return measure
     except Empty:
         return None
     except Exception as e:
@@ -165,8 +176,8 @@ def allocator_measure_updated(allocation: list, node_addr: str):
         voltage_values.put_nowait([node_addr, v])
     except Full:
         print("voltage_values is full")
-    if logger is not None:
-        logger.info('{}\t{}\t{}\t{}\t{}'.format(
+    if logger_a is not None:
+        logger_a.info('{}\t{}\t{}\t{}\t{}'.format(
             time(), addr_to_name[node_addr], allocation[0].p_value, allocation[0].q_value, v))
 
 
