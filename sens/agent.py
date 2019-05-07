@@ -96,7 +96,7 @@ class Agent(object, metaclass=ABCMeta):
         self._local = None
         self.comm = AsyncCommunication()
         self.comm._callback = self.receive
-        self._error_model = ErrorModel()
+        self._error_model = None
         self._sim_thread = Thread(target=self._run)
         self.logger = None
 
