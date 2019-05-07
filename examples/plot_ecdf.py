@@ -5,28 +5,63 @@ from numpy import arange
 from statsmodels.distributions.empirical_distribution import ECDF
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes
 from mpl_toolkits.axes_grid1.inset_locator import mark_inset
+import argparse
+import os
+
+parser = argparse.ArgumentParser(
+    description='Realtime Time multi-agent simulation of CIGRE LV network')
+parser.add_argument('--pi', action='store_true',
+                    help='plot PI results')
+parser.add_argument('--opf', action='store_true',
+                    help='plot OPF results')
+parser.add_argument('--output', type=str,
+                    help='output file',
+                    default='sim_bars.png')
+parser.add_argument('--high-limit', type=float,
+                    help='Total simulation time',
+                    default=1.05)
+parser.add_argument('--low-limit', type=float,
+                    help='Total simulation time',
+                    default=0.95)
+parser.add_argument('--cycles', type=str,
+                    help='',
+                    default='1,2,3,4,5,6,7,8,9,10')    
+parser.add_argument('--results', type=str,
+                    help='',
+                    default='./experiments/3')
+parser.add_argument('--runs', type=int,
+                    help='',
+                    default=5)                                      
+
+args = parser.parse_args()
+results = args.results
+runs = args.runs
+cycles = [int(i) for i in args.cycles.split(',')]
 
 pv_voltages: list = []
-for i in range(10):
-    data = pd.read_csv('experiments/3/sim_pv_%d.log'%(i+1), header=None, delimiter='\t')
+for i in range(runs):
+    data = pd.read_csv(os.path.join("./experiments/3", 'sim_pv_%d.log'%(i+1)), header=None, delimiter='\t')
     data[0] = data[0]-data.loc[0,0]
+    data.drop_duplicates(4, inplace=True)
     pv_voltages = pv_voltages + data[4].tolist()
 pv_ecdf = ECDF(pv_voltages)
 pv_voltages = [i for i in arange(0.9, 1.1, 0.001)]
 # ecdf: list = []
-for i in range(10): ## Cycle
+for i in cycles: ## Cycle
     fig = plt.figure()
     ax = fig.add_subplot(111)
 
     opf_voltages: list = []
     pi_voltages: list = []
-    for j in range(10): ## Run
-        data = pd.read_csv('experiments/3/sim_opf_{}.{}.log'.format(i+1, j+1), header=None, delimiter='\t')
+    for j in range(runs): ## Run
+        data = pd.read_csv(os.path.join(results, 'sim_opf_{}.{}.b.log'.format(i, j+1)), header=None, delimiter='\t')
         data[0] = data[0]-data.loc[0,0]
+        data.drop_duplicates(4, inplace=True)
         opf_voltages = opf_voltages+data[4].tolist()
         # print("OPF %d: "%i, ecdf)
-        data = pd.read_csv('experiments/3/sim_pi_{}.{}.log'.format(i+1, j+1), header=None, delimiter='\t')
+        data = pd.read_csv(os.path.join(results, 'sim_pi_{}.{}.b.log'.format(i, j+1)), header=None, delimiter='\t')
         data[0] = data[0]-data.loc[0,0]
+        data.drop_duplicates(4, inplace=True)
         pi_voltages = pi_voltages + data[4].tolist()
         # print("PI %d: "%i, ecdf)
     opf_ecdf = ECDF(opf_voltages)
@@ -84,7 +119,7 @@ for i in range(10): ## Cycle
     axins.set_yticks(yticks)
     axins.set_yticklabels(['%0.2f'%i for i in yticks], fontsize=8)
     mark_inset(ax, axins, loc1=1, loc2=2, fc="none", ec="0.5")
-    plt.savefig('sim_ecdf_%d'%(i+1), dpi=300)
+    plt.savefig('sim_ecdf_%d'%(i), dpi=300)
     plt.close()
 # ax.set_ylabel('Count of voltage values beyond thresholds')
 # ax.set_xticks([i+1 for i in range(10)])
