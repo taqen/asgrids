@@ -1,26 +1,64 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import linecache
 import os
 import random
-import signal
+from signal import signal, SIGINT
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor as Executor
 from copy import deepcopy
 from queue import Empty, Full, Queue
-from threading import Lock
+from threading import Lock, Event
 from time import sleep, time
 from typing import Dict
+import argparse
 
-import matplotlib.animation as animation
-import matplotlib.pyplot as plt
 import numpy as np
 import pandapower as pp
 import pandapower.networks as pn
 import pandas as pd
+from sens import Allocation, SmartGridSimulation, optimize_network_opf, runpp
+# tracemalloc.start(25)
 
-from sens import Allocation, SmartGridSimulation, optimize_network_opf, runpp, live_plot
+parser = argparse.ArgumentParser(
+    description='Realtime Time multi-agent simulation of large smartgrid networks')
+parser.add_argument('--case', type=str,
+                    help='case scenario, one of: case6ww, \
+                        case9,case14,case30,case_ieee30, \
+                        case33bw,case39,case57,case118,case300',
+                    default='case6ww')
+parser.add_argument('--simtime', type=float,
+                    help='simulation time',
+                    default=30)
+
+args = parser.parse_args()
+case=args.case
+simtime = args.simtime
+terminate = Event()
+terminate.clear()
+
+cases = {"case6ww": pn.case6ww,
+         "case9": pn.case9,
+         "case14": pn.case14,
+         "case30": pn.case30,
+         "case_ieee30": pn.case_ieee30,
+         "case33bw": pn.case33bw,
+         "case39": pn.case39,
+         "case57": pn.case57,
+         "case118": pn.case118,
+         "case300": pn.case300
+         }
+
+def generate_allocations(node, old_allocation, now=0):
+    # Scheduling allocations
+    try:
+        new_allocation = Allocation(
+            aid=0,
+            p_value=old_allocation.p_value * (1 + random.uniform(-1e-1, 1e-1)),
+            q_value=old_allocation.q_value * (1 + random.uniform(-1e-1, 1e-1)),
+            duration=random.uniform(1, 60))
+        return new_allocation
+    except Exception as e:
+        print(e)
+
 
 
 def display_top(snapshot, key_type='lineno', limit=10):
@@ -50,93 +88,115 @@ def display_top(snapshot, key_type='lineno', limit=10):
 
 
 def monitor_memory(N):
-    tracemalloc.start()
-    while i in range(N):
+    snapshot1 = None
+    snapshot2 = None
+    try:
         tracemalloc.start()
+        for i in range(N):
+            if terminate.is_set():
+                break
+            tracemalloc.start()
+            if snapshot1 is None:
+                snapshot1 = tracemalloc.take_snapshot()
+                continue
+            snapshot2 = tracemalloc.take_snapshot() 
+            top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+            #print(top_stats)
+            for stat in top_stats[:3]:
+                print(stat)
+            print('----------')
+            sleep(1.0)
+        tracemalloc.stop()
+    except Exception as e:
+        print(e)
+
+def print_memory(frames):
+    # Store 25 frames
+    try:
+        # ... run your application ...
+
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics('traceback')
+
+        # pick the biggest memory block
         stat = top_stats[0]
         print("%s memory blocks: %.1f KiB" % (stat.count, stat.size / 1024))
         for line in stat.traceback.format():
             print(line)
-        sleep(1.0)
-    tracemalloc.stop()
+    except Exception as e:
+        print(e)
 
 
-# %%
-allocations_queue = Queue()  # type:Queue
-measure_queues = {}  # type: Dict
-network_size = Queue()  # type:Queue
-plot_values = Queue(100)  # type:Queue
-optimal_values = Queue()  # type:Queue
+addr_to_name: dict = {}
+allocations_queue: Queue = Queue(400)
+measure_queues: dict = {}
+network_size: list = []
+voltage_values: Queue = Queue(400)
+allocation_generators: dict = {}
 lock = Lock()
+
 # Create SmartGridSimulation environment
-sim = SmartGridSimulation()
+sim: SmartGridSimulation = SmartGridSimulation()
+# Handle ctrl-c interruptin
+def shutdown(x, y):
+    print("Shutdown")
+    terminate.set()
+    allocations_queue.put([0, 0, 0, 0])
+    voltage_values.put([0,0])
+    sim.stop()
+    tracemalloc.stop()
+signal(SIGINT, shutdown)
 
-
-# %%
-# generate sequential port numbers
 def gen_port(initial_port):
     port = initial_port
     while True:
         yield port
         port = port + 1
 
+port = gen_port(5000)
 
 def joined_network(src, dst):
     # print("{} joined network".format(src))
-    network_size.put(src)
+    network_size.append(src)
 
 
-# Used locally to load and prepare data
-def load_csv(file, columns=None):
-    if columns is None:
-        columns = list()
-    import pandas as pd
-
-    # Data prepation
-    curves = pd.read_csv(file)
-    filtered = curves.filter(items=columns).values.tolist()
-    return filtered
-
-
-# This is an example of how to schedule events from a generated timeseries
-def generate_allocations(node, old_allocation):
-    # Scheduling allocations
-    try:
-        new_allocation = Allocation(
-            aid=0,
-            p_value=old_allocation.p_value * (1 + random.uniform(-1e-1, 1e-1)),
-            q_value=old_allocation.q_value * (1 + random.uniform(-1e-1, 1e-1)),
-            duration=random.uniform(1, 60))
-        return new_allocation
-    except Exception as e:
-        print(e)
-
-
-def allocation_updated(allocation: Allocation, node_addr: str):
+def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     # We receive node_addr as "X.X.X.X:YYYY"
     # ind also identifies the node in pandapawer loads list
-    # print("received allocation update")
-    allocations_queue.put(
-        [time(), node_addr, allocation.p_value, allocation.q_value])
+    # print("Node %s updated allocation"%node_addr)
     try:
-        res = measure_queues[node_addr].get_nowait()
+        allocations_queue.put_nowait(
+            [timestamp, node_addr, allocation.p_value, allocation.q_value])
+        measure = measure_queues[node_addr].get_nowait()
+        return measure
     except Empty:
-        res = None
-    return res
+        return None
+    except Full:
+        return None
+    except Exception as e:
+        print("Error in allocation_updated: {}".format(e))
 
+def allocator_measure_updated(allocation: list, node_addr: str):
+    # we receive a list containing current PQ values and Voltage measure
+    v = allocation[1]
+    # print("allocator updated v = {} for node {}".format(v, node_addr))
+    try:
+        voltage_values.put_nowait([node_addr, v])
+    except Full:
+        print("voltage_values is full")
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
     nodes = list()
     for i in range(len(net.load.index)):
+        print('load', '127.0.0.1:{}'.format(next(port)))
         node = sim.create_node('load', '127.0.0.1:{}'.format(next(port)))
+        node.update_measure_period = 1
         node.run()
         measure_queues[node.local] = Queue(maxsize=1)
-        node.update_measure = allocation_updated
+        node.update_measure_cb = allocation_updated
         node.joined_callback = joined_network
-        node.generate_allocations = generate_allocations
+        addr_to_name[node.local] = net.load['name'][i]
         net.load['name'][i] = "{}".format(node.local)
         nodes.append(node)
 
@@ -145,90 +205,79 @@ def create_nodes(net, remote):
     return nodes
 
 
-# Handle ctrl-c interruptin
-def shutdown(x, y):
-    allocations_queue.put([0, 0, 0, 0])
-    sim.stop()
-
-
-signal.signal(signal.SIGINT, shutdown)
-
-port = gen_port(5555)
-
-# %%
-# Create a local Agent of type NetworkAllocator
 allocator = sim.create_node(
     ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
-# Hit Agent's run, from here on scheduled events will be executed
-# if local address is not set at initialiazion or before run,
-# an exception is raised
 initial_time = time()
+allocator.identity = allocator.local
+allocator.allocation_updated = allocator_measure_updated
 allocator.run()
-# %%
-# Create a corresponding multi-agent deployment to the pandapower network
-net = pn.case6ww()
+
+if case in cases.keys():
+    net = cases[case]()
+else:
+    raise(ValueError("Wrong case"))
+
 nodes = create_nodes(net, allocator.local)
-# %%
-print("waiting for Network ready: {}".format(len(nodes)))
-while network_size.qsize() < len(nodes):
+print("waiting for {} nodes to join network".format(len(nodes)))
+while len(set(network_size)) < len(nodes):
+    sleep(1)
     continue
 print("Network ready")
+
 for node in nodes:
     allocation = Allocation(
         0,
         net.load.loc[net.load['name'] == node.local, 'p_kw'].item(),
         net.load.loc[net.load['name'] == node.local, 'q_kvar'].item(),
         1)
-    node.schedule(node.handle_allocation, args={'allocation': allocation})
-
-net.load['min_p_kw'] = None
-net.load['min_q_kvar'] = None
-net.load['max_p_kw'] = None
-net.load['max_q_kvar'] = None
-net.load['controllable'] = False
-
-# c_loads = random.choices([node.local for node in nodes], k=3)
-c_loads = ['127.0.0.1:5556', '127.0.0.1:5557', '127.0.0.1:5558']
-for load in c_loads:
-    net.load.loc[net.load['name'] == load, 'controllable'] = True
-    net.load.loc[net.load['name'] == load, 'min_p_kw'] = - \
-        1 * net.load.loc[net.load['name'] == load, 'p_kw']
-    net.load.loc[net.load['name'] == load, 'min_q_kvar'] = - \
-        1 * net.load.loc[net.load['name'] == load, 'q_kvar']
-    net.load.loc[net.load['name'] == load,
-                 'max_p_kw'] = net.load.loc[net.load['name'] == load, 'p_kw']
-    net.load.loc[net.load['name'] == load,
-                 'max_q_kvar'] = net.load.loc[net.load['name'] == load, 'q_kvar']
-c_buses = []
-for row in net.bus.iterrows():
-    if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-        c_buses.append(row[0])
+    node.curr_allocation = allocation
+    node.generate_allocations = generate_allocations
 
 
-def plot_objs():
-    import objgraph
-
-    while not sim.shutdown:
-        sleep(30)
-        objgraph.show_growth(limit=3)
+def worker_pp(fn, args: list, cycle: float):
+    import sys, traceback
+    while not terminate.is_set():
         try:
-            objgraph.show_chain(
-                objgraph.find_backref_chain(random.choice(
-                    objgraph.by_type('weakref')), objgraph.is_proper_module),
-                filename='chain.png')
+            lock.acquire()
+            fn(*args)
+            lock.release()
         except Exception as e:
-            print(e)
-        # obj = objgraph.by_type('list')[1000]
-        # objgraph.show_backrefs(obj, max_depth=10)
-        break
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            print("What the fuck at worker_pp:")
+            print(repr(traceback.format_tb(exc_traceback)))
+            return
+        if cycle > 0:
+            sleep(cycle)
 
+def worker_optimize(fn, args: list, cycle: float):
+    import sys, traceback
+    while not terminate.is_set():
+        try:
+            lock.acquire()
+            netcopy = deepcopy(net)
+            lock.release()
+            ARGS = [netcopy] + args
+            fn(*ARGS)
+        except Exception as e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            print("What the fuck at {}:".format(fn))
+            print(repr(traceback.format_tb(exc_traceback)))
+            break
+        if cycle > 0:
+            sleep(cycle)
+    print("Terminating {}".format(fn))
 
-# %%
+allocator.schedule(shutdown, args=[None, None], delay=simtime)
 with Executor(max_workers=200) as executor:
-    net_copy = deepcopy(net)
-    executor.submit(runpp, net_copy, allocations_queue, measure_queues, plot_values, with_plot=True, initial_time=initial_time)
-    net_copy = deepcopy(net)
-    executor.submit(optimize_network_opf, net_copy, allocator)
-    # executor.submit(plot_objs)
-    live_plot(c_buses, plot_values)
-    # executor.submit(monitor_memory, 5)
+    try:
+        print("Running power flow analysis")
+        executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, False, None, initial_time, None], 0)
+        print("Optimizing network in realtime with OPF")
+        executor.submit(worker_optimize, optimize_network_opf, [allocator, voltage_values, 0], 0)
+        # executor.submit(plot_objs)
+        # executor.submit(monitor_memory, 100)
+        # executor.submit(print_memory, 25)
+
+    except Exception as e:
+        print(e)
+
