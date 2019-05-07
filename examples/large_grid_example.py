@@ -5,7 +5,7 @@ from signal import signal, SIGINT
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor as Executor
 from copy import deepcopy
-from queue import Empty, Full, Queue
+from collections import deque as Queue
 from threading import Lock, Event
 from time import sleep, time
 from typing import Dict
@@ -16,8 +16,6 @@ import pandapower as pp
 import pandapower.networks as pn
 import pandas as pd
 from sens import Allocation, SmartGridSimulation, optimize_network_opf, runpp
-# tracemalloc.start(25)
-
 parser = argparse.ArgumentParser(
     description='Realtime Time multi-agent simulation of large smartgrid networks')
 parser.add_argument('--case', type=str,
@@ -28,10 +26,27 @@ parser.add_argument('--case', type=str,
 parser.add_argument('--simtime', type=float,
                     help='simulation time',
                     default=30)
+parser.add_argument('--opf-cycle', type=float,
+                    help='opf cycle(s)',
+                    default=6)
+parser.add_argument('--monitor', action='store_true',
+                    help='')
+parser.add_argument('--optimize', action='store_true',
+                    help='')
+parser.add_argument('--pp', action='store_true',
+                    help='')
 
 args = parser.parse_args()
 case=args.case
 simtime = args.simtime
+cycle = args.opf_cycle
+monitor = args.monitor
+optimize = args.optimize
+pp = args.pp
+
+if monitor:
+    tracemalloc.start()
+
 terminate = Event()
 terminate.clear()
 
@@ -54,7 +69,7 @@ def generate_allocations(node, old_allocation, now=0):
             aid=0,
             p_value=old_allocation.p_value * (1 + random.uniform(-1e-1, 1e-1)),
             q_value=old_allocation.q_value * (1 + random.uniform(-1e-1, 1e-1)),
-            duration=random.uniform(1, 60))
+            duration=random.uniform(20, 60))
         return new_allocation
     except Exception as e:
         print(e)
@@ -67,7 +82,10 @@ def display_top(snapshot, key_type='lineno', limit=10):
         tracemalloc.Filter(False, "<unknown>"),
     ))
     top_stats = snapshot.statistics(key_type)
-
+    trace_stats = snapshot.statistics('traceback')[:1]
+    print("_-------------------------------------------------------------")
+    print(trace_stats)
+    print("---------------------------------------------------------------")
     print("Top %s lines" % limit)
     for index, stat in enumerate(top_stats[:limit], 1):
         frame = stat.traceback[0]
@@ -87,26 +105,29 @@ def display_top(snapshot, key_type='lineno', limit=10):
     print("Total allocated size: %.1f KiB" % (total / 1024))
 
 
-def monitor_memory(N):
-    snapshot1 = None
-    snapshot2 = None
+def monitor_memory():
+    snapshot1 = tracemalloc.take_snapshot()
     try:
-        tracemalloc.start()
-        for i in range(N):
-            if terminate.is_set():
-                break
-            tracemalloc.start()
-            if snapshot1 is None:
-                snapshot1 = tracemalloc.take_snapshot()
-                continue
-            snapshot2 = tracemalloc.take_snapshot() 
+        snapshot1 = snapshot1.filter_traces((tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),tracemalloc.Filter(False, "<unknown>"),))
+    except Exception as e:
+        print(e)
+        return
+    sleep(10.0)
+
+    try:
+        while not False: #terminate.is_set():
+            snapshot2 = tracemalloc.take_snapshot()
+            snapshot2 = snapshot2.filter_traces(
+                (tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+                tracemalloc.Filter(False, "<unknown>"),tracemalloc.Filter(False, tracemalloc.__file__),))
+
+            # display_top(snapshot)
             top_stats = snapshot2.compare_to(snapshot1, 'lineno')
-            #print(top_stats)
-            for stat in top_stats[:3]:
+            snapshot1 = snapshot2
+            print("[ Top 10 differences ]")
+            for stat in top_stats[:10]:
                 print(stat)
-            print('----------')
-            sleep(1.0)
-        tracemalloc.stop()
+            sleep(10.0)
     except Exception as e:
         print(e)
 
@@ -128,10 +149,10 @@ def print_memory(frames):
 
 
 addr_to_name: dict = {}
-allocations_queue: Queue = Queue(400)
+allocations_queue: Queue = Queue(maxlen=1000)
 measure_queues: dict = {}
 network_size: list = []
-voltage_values: Queue = Queue(400)
+voltage_values: Queue = Queue(maxlen=1000)
 allocation_generators: dict = {}
 lock = Lock()
 
@@ -141,10 +162,11 @@ sim: SmartGridSimulation = SmartGridSimulation()
 def shutdown(x, y):
     print("Shutdown")
     terminate.set()
-    allocations_queue.put([0, 0, 0, 0])
-    voltage_values.put([0,0])
+    allocations_queue.append([0, 0, 0, 0])
+    voltage_values.append([0,0])
     sim.stop()
     tracemalloc.stop()
+
 signal(SIGINT, shutdown)
 
 def gen_port(initial_port):
@@ -165,24 +187,24 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     # ind also identifies the node in pandapawer loads list
     # print("Node %s updated allocation"%node_addr)
     try:
-        allocations_queue.put_nowait(
+        allocations_queue.append(
             [timestamp, node_addr, allocation.p_value, allocation.q_value])
-        measure = measure_queues[node_addr].get_nowait()
-        return measure
-    except Empty:
-        return None
-    except Full:
-        return None
     except Exception as e:
-        print("Error in allocation_updated: {}".format(e))
+        print("Error in allocation_updated(allocations_queue): {}".format(e))
+        return None
+    try:
+        measure = measure_queues[node_addr].popleft()
+        return measure
+    except Exception as e:
+        return None
 
 def allocator_measure_updated(allocation: list, node_addr: str):
     # we receive a list containing current PQ values and Voltage measure
     v = allocation[1]
     # print("allocator updated v = {} for node {}".format(v, node_addr))
     try:
-        voltage_values.put_nowait([node_addr, v])
-    except Full:
+        voltage_values.append([node_addr, v])
+    except:
         print("voltage_values is full")
 
 def create_nodes(net, remote):
@@ -193,7 +215,7 @@ def create_nodes(net, remote):
         node = sim.create_node('load', '127.0.0.1:{}'.format(next(port)))
         node.update_measure_period = 1
         node.run()
-        measure_queues[node.local] = Queue(maxsize=1)
+        measure_queues[node.local] = Queue(maxlen=1)
         node.update_measure_cb = allocation_updated
         node.joined_callback = joined_network
         addr_to_name[node.local] = net.load['name'][i]
@@ -219,7 +241,7 @@ else:
 
 nodes = create_nodes(net, allocator.local)
 print("waiting for {} nodes to join network".format(len(nodes)))
-while len(set(network_size)) < len(nodes):
+while len(set(network_size)) < len(nodes) and not terminate.is_set():
     sleep(1)
     continue
 print("Network ready")
@@ -254,10 +276,12 @@ def worker_optimize(fn, args: list, cycle: float):
     while not terminate.is_set():
         try:
             lock.acquire()
-            netcopy = deepcopy(net)
-            lock.release()
-            ARGS = [netcopy] + args
+            # netcopy = deepcopy(net)
+            # lock.release()
+            ARGS = [net] + args
             fn(*ARGS)
+            lock.release()
+
         except Exception as e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             print("What the fuck at {}:".format(fn))
@@ -270,12 +294,15 @@ def worker_optimize(fn, args: list, cycle: float):
 allocator.schedule(shutdown, args=[None, None], delay=simtime)
 with Executor(max_workers=200) as executor:
     try:
-        print("Running power flow analysis")
-        executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, False, None, initial_time, None], 0)
-        print("Optimizing network in realtime with OPF")
-        executor.submit(worker_optimize, optimize_network_opf, [allocator, voltage_values, 0], 0)
+        if pp:
+            print("Running power flow analysis")
+            executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, False, None, initial_time, None], 0)
+        if optimize:
+            print("Optimizing network in realtime with OPF")
+            executor.submit(worker_optimize, optimize_network_opf, [allocator, voltage_values, cycle], cycle)
         # executor.submit(plot_objs)
-        # executor.submit(monitor_memory, 100)
+        if monitor:
+            executor.submit(monitor_memory)
         # executor.submit(print_memory, 25)
 
     except Exception as e:
