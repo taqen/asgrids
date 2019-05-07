@@ -12,7 +12,7 @@ from rpyc.utils.classic import deliver, teleport_function
 from rpyc.utils.helpers import BgServingThread
 from rpyc.utils.zerodeploy import DeployedServer
 from queue import Queue, Full, Empty
-from time import time, sleep
+from time import monotonic as time, sleep
 from pandapower import pp, OPFNotConverged, LoadflowNotConverged
 from .network_allocator import NetworkAllocator
 from .network_load import NetworkLoad
@@ -20,7 +20,6 @@ from .defs import Allocation
 from .controller import PIController
 import logging
 import sys, traceback
-
 # logging.basicConfig(filename='simulation.log',
 #                             filemode='a',
 #                             format='%(message)s',
@@ -172,7 +171,9 @@ def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue
         # print("runpp: updating {} new allocations".format(qsize))
     for i in range(qsize):
         try:
-            timestamp, name, p_kw, q_kw = allocations_queue.get()
+            timestamp, name, p_kw, q_kw = allocations_queue.get_nowait()
+        except Empty:
+            return
         except Exception as e:
             print("Error getting allocation from queue: {}".format(e))
             raise(e)
