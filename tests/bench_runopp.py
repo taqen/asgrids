@@ -7,26 +7,27 @@ import timeit
 import matplotlib.pyplot as plt
 import numpy as np
 import pandapower as pp
+import pandapower.networks as pn
 from joblib import Parallel, delayed
 
 # %%
-cases = [
-    "case6ww",
-    "case9",
-    "case14",
-    "case30",
-    "case_ieee30",
-    "case33bw",
-    "case39",
-    "case57",
-    "case118",
-    "case300",
-]
+cases ={
+    "case6ww":pn.case6ww,
+    "case9":pn.case9,
+    "case14":pn.case14,
+    "case30":pn.case30,
+    "case_ieee30":pn.case_ieee30,
+    "case33bw":pn.case33bw,
+    "case39":pn.case39,
+    "case57":pn.case57,
+    "case118":pn.case118,
+    "case300":pn.case300,
+}
 
 
 # %%
-def run(func, case, repeat=1):
-    net = eval("pn.{}()".format(case), globals(), locals())
+def run(func, net, repeat=1):
+    # net = eval("pn.{}()".format(case), globals(), locals())
 
     def update_net():
         func(net, init_vm_pu='results')
@@ -37,8 +38,8 @@ def run(func, case, repeat=1):
     t = timeit.Timer("update_net()", globals=locals(), setup="import pandapower as pp")
     try:
         bench = t.repeat(repeat=repeat, number=1)
-        print([case, bench])
-        return [case, bench]
+        print([len(net.load.index), bench])
+        return [len(net.load.index), bench]
     except pp.optimal_powerflow.OPFNotConverged:
         print("optimal flow calculation for {} didn't converge")
     except UserWarning as e:
@@ -47,7 +48,7 @@ def run(func, case, repeat=1):
 
 # %%capture
 results = Parallel(n_jobs=8)(
-    delayed(run)(pp.runpp, case, 10) for case in cases)
+    delayed(run)(pp.runpp, cases[case](), 10) for case in cases.keys())
 
 # %%
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -62,11 +63,11 @@ ax.set_ylabel('power flow analysis runtime')
 ax.set_xticks(index)
 ax.set_xticklabels((result[0] for result in results))
 fig.tight_layout()
-plt.show()
+plt.savefig('pp_time.png', dpi=600)
 
 # %%capture
 results = Parallel(n_jobs=8)(
-    delayed(run)(pp.runopp, case, 10) for case in cases)
+    delayed(run)(pp.runopp, cases[case](), 10) for case in cases.keys())
 
 # %%
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -81,4 +82,4 @@ ax.set_ylabel('optimal power flow runtime')
 ax.set_xticks(index)
 ax.set_xticklabels((result[0] for result in results))
 fig.tight_layout()
-plt.show()
+plt.savefig('opff_time.png', dpi=600)
