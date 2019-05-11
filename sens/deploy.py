@@ -168,87 +168,59 @@ def runpp(net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue
         initial_time (int, optional): Defaults to 0.
     """
     qsize = allocations_queue.qsize()
+    changed = False
+    if qsize == 0:
+        return
         # print("runpp: updating {} new allocations".format(qsize))
-    for i in range(qsize):
-        try:
-            timestamp, name, p_kw, q_kw = allocations_queue.get_nowait()
-        except Empty:
-            return
-        except Exception as e:
-            print("Error getting allocation from queue: {}".format(e))
-            raise(e)
-        if timestamp == name == p_kw == q_kw == 0:
-            print("Terminating runpp")
-            return
-        try:
-            if name in net.sgen['name'].tolist():
-                net.sgen.loc[net.sgen['name'] == name, 'p_kw'] = p_kw
-                net.sgen.loc[net.sgen['name'] == name, 'q_kw'] = q_kw
-            elif  name in net.load['name'].tolist():
-                net.load.loc[net.load['name'] == name, 'p_kw'] = p_kw
-                net.load.loc[net.load['name'] == name, 'q_kw'] = q_kw
-        except Exception as e:
-            print("Error setting p,q values from net: {}")
-            raise(e)
-        if logger is not None:
-            logger.info('{}\tload_{}\t{}\t{}'.format(
-                timestamp, name, p_kw, q_kw))
-
-    converged = True
     try:
-        pp.runpp(net, init='results', verbose=True)
+        for i in range(qsize):
+            timestamp, name, p_kw, q_kw = allocations_queue.get_nowait()
+            if timestamp == name == p_kw == q_kw == 0:
+                print("Terminating runpp")
+                return
+            if net.load.loc[net.load['name'] == name, 'p_kw'].item() != p_kw:
+                net.load.loc[net.load['name'] == name, 'p_kw'] = p_kw
+                changed = True
+            if net.load.loc[net.load['name'] == name, 'q_kvar'].item() != q_kw:
+                net.load.loc[net.load['name'] == name, 'q_kvar'] = q_kw
+                changed = True
+
+            if changed:
+                pp.runpp(net, init='results', verbose=True)
+                if logger is not None and changed:
+                    for i in net.bus.index:
+                        logger.info('{}\t{}\t{}'.format(
+                            time(), net.bus.loc[i, 'name'], net.res_bus.loc[i, 'vm_pu']))
+            else:
+                return
     except LoadflowNotConverged as e:
         print("runpp failed miserably: {}".format(e))
         return
-    except Exception as e:
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        print("What the fuck at runpp:")
-        print("*** format_tb:")
-        print(repr(traceback.format_tb(exc_traceback)))
+    except Empty:
         return
-
+    except Exception as e:
+        # exc_type, exc_value, exc_traceback = sys.exc_info()
+        # print("What the fuck at runpp:")
+        # print("*** format_tb:")
+        # print(repr(traceback.format_tb(exc_traceback)))
+        print(e)
+        return
 
     # Updating voltage measures for clients and live_plot
     for node in measure_queues:
         bus_ind = 0
         try:
-            if node in net.sgen['name'].tolist():
-                bus_ind = net.load['bus'][net.sgen['name'] == node].item()
-            elif node in net.load['name'].tolist():
-                bus_ind = net.load['bus'][net.load['name'] == node].item()
-            else:
-                raise(ValueError)
+            bus_ind = net.load['bus'][net.load['name'] == node].item()
         except Exception as e:
             raise(e)
-        vm_pu = 0
         vm_pu = net.res_bus['vm_pu'][bus_ind].item()
         try:
             measure_queues[node].get_nowait()
         except Empty:
             measure_queues[node].put(vm_pu)
-        # print("\nVotage at bus {}: {}\n".format(bus_ind, vm_pu))
-    if with_plot:
-        try:
-            for row in net.res_bus.iterrows():
-                if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-                    plot_queue.put_nowait(
-                        [time()-initial_time, row[0], row[1][0].item()])
-        except Full:
-            print("plot_queue is full")
-            plot_queue.get()
-            plot_queue.put([time(), row[0], row[1][0].item()])
-        except Exception as e:
-            print(e)
-            raise(e)
-
-    if logger is not None:
-        for row in net.res_bus.iterrows():
-            if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-                logger.info('{}\tbus_{}\t{}\t{}'.format(
-                    time(), row[0], row[1][0].item(), 0))
 
 
-def optimize_network_opf(net, allocator, voltage_values, duty_cycle=10):
+def optimize_network_opf(net, allocator, voltage_values, duty_cycle=10, opt_logger=None):
     qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
     optimize = False
     for _ in range(qsize):
@@ -332,7 +304,7 @@ def optimize_network_pi(net, allocator, voltage_values: Queue, duty_cycle=10):
         bus_vn = 400  # v
         try:
             # Listing all controllable loads, these are the PV generators that will be optimized
-            pv_gens = net.sgen.loc[net.load['controllable']
+            pv_gens = net.load.loc[net.load['controllable']
                                 == True]['name'].tolist()
         except Exception as e:
             print(e)
