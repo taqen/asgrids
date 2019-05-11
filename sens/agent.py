@@ -165,7 +165,8 @@ class Agent(object, metaclass=ABCMeta):
             try:
                 func(self.env)
             except Exception as e:
-                self.logger.warning(e)
+                self.logger.warning("Error executing function {}: {}".format(func, e))
+                raise(e)
 
     def schedule(self, action, args=None, delay=0, value=None, callbacks=None):
         """

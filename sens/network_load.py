@@ -42,7 +42,7 @@ class NetworkLoad(Agent):
             self.schedule(self.get_allocation, delay=self.generate_allocations_period)
             self.schedule(self.update_measure, delay=self.update_measure_period)
         except Exception as e:
-            self.logger.warning(e)
+            self.logger.warning("network load run: ".format(e))
 
 
     def handle_receive(self, p, src=None):
