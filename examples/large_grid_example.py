@@ -5,7 +5,7 @@ from signal import signal, SIGINT
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor as Executor
 from copy import deepcopy
-from collections import deque as Queue
+from queue import Queue
 from threading import Lock, Event
 from time import sleep, time
 from typing import Dict
@@ -29,12 +29,18 @@ parser.add_argument('--simtime', type=float,
 parser.add_argument('--opf-cycle', type=float,
                     help='opf cycle(s)',
                     default=6)
+parser.add_argument('--nodes',
+                    help='opf cycle(s)',
+                    default="all")
 parser.add_argument('--monitor', action='store_true',
                     help='')
 parser.add_argument('--optimize', action='store_true',
                     help='')
 parser.add_argument('--pp', action='store_true',
                     help='')
+parser.add_argument('--initial-port', type=int,
+                    default=4000)
+parser.add_argument('--join-network', action='store_true')
 
 args = parser.parse_args()
 case=args.case
@@ -42,10 +48,19 @@ simtime = args.simtime
 cycle = args.opf_cycle
 monitor = args.monitor
 optimize = args.optimize
-pp = args.pp
+run_pp = args.pp
+nNodes = args.nodes
+initial_port = args.initial_port
+join_network = args.join_network
 
 if monitor:
     tracemalloc.start()
+print("------------------------------------\n\
+        using network: {} with {} nodes\n\
+        simulation time: {}s\n\
+        initial port: {}\
+        ".format(case, nNodes, simtime, initial_port))
+print("------------------------------------")
 
 terminate = Event()
 terminate.clear()
@@ -149,10 +164,10 @@ def print_memory(frames):
 
 
 addr_to_name: dict = {}
-allocations_queue: Queue = Queue(maxlen=1000)
+allocations_queue: Queue = Queue(1000)
 measure_queues: dict = {}
 network_size: list = []
-voltage_values: Queue = Queue(maxlen=1000)
+voltage_values: Queue = Queue(1000)
 allocation_generators: dict = {}
 lock = Lock()
 
@@ -162,8 +177,8 @@ sim: SmartGridSimulation = SmartGridSimulation()
 def shutdown(x, y):
     print("Shutdown")
     terminate.set()
-    allocations_queue.append([0, 0, 0, 0])
-    voltage_values.append([0,0])
+    allocations_queue.put([0, 0, 0, 0])
+    voltage_values.put([0,0])
     sim.stop()
     tracemalloc.stop()
 
@@ -175,10 +190,10 @@ def gen_port(initial_port):
         yield port
         port = port + 1
 
-port = gen_port(5000)
+port = gen_port(initial_port)
 
 def joined_network(src, dst):
-    # print("{} joined network".format(src))
+    print("{} joined network".format(src))
     network_size.append(src)
 
 
@@ -187,13 +202,13 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     # ind also identifies the node in pandapawer loads list
     # print("Node %s updated allocation"%node_addr)
     try:
-        allocations_queue.append(
+        allocations_queue.put_nowait(
             [timestamp, node_addr, allocation.p_value, allocation.q_value])
     except Exception as e:
         print("Error in allocation_updated(allocations_queue): {}".format(e))
         return None
     try:
-        measure = measure_queues[node_addr].popleft()
+        measure = measure_queues[node_addr].get_nowait()
         return measure
     except Exception as e:
         return None
@@ -203,27 +218,64 @@ def allocator_measure_updated(allocation: list, node_addr: str):
     v = allocation[1]
     # print("allocator updated v = {} for node {}".format(v, node_addr))
     try:
-        voltage_values.append([node_addr, v])
-    except:
-        print("voltage_values is full")
+        voltage_values.put_nowait([node_addr, v])
+    except Exception as e:
+        print("voltage_values is full: {}".format(e))
+
+def add_more_nodes(net, N):
+    maxN = len(net.load.index)
+    for i in range(N//maxN):
+        for j in range(maxN):
+            try:
+                params = dict(net.load.loc[j])
+            except:
+                print("Error")
+            if 'name' in params.keys() and params['name'] != None:
+                params['name'] = params['name']+'_{}'.format(j+i*maxN)
+            try:
+                pp.create_load(net, **params)
+            except:
+                print("Error")
+   
+    for i in range(N%maxN):
+        print(i)
+        params = dict(net.load.loc[i])
+        if 'name' in params.keys() and params['name'] != None:
+            params['name'] = params['name']+'_{}'.format(N//maxN)
+        pp.create_load(net, **params)
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
     nodes = list()
-    for i in range(len(net.load.index)):
-        print('load', '127.0.0.1:{}'.format(next(port)))
-        node = sim.create_node('load', '127.0.0.1:{}'.format(next(port)))
+    sim_nodes = len(net.load.index)
+    if nNodes !='all' and int(nNodes) <= sim_nodes:
+        sim_nodes = int(nNodes)
+    elif int(nNodes) > sim_nodes:
+        print("adding %d nodes to pandapower net"%(int(nNodes) - sim_nodes))
+        try:
+            add_more_nodes(net, int(nNodes) - sim_nodes)
+            print("Hello")
+        except Exception as e:
+            print(e)
+        sim_nodes = int(nNodes)
+    for i in range(sim_nodes):
+        print(i)
+        port_number=next(port)
+        # print('load', '127.0.0.1:{}'.format(port_number))
+        node = sim.create_node('load', '127.0.0.1:{}'.format(port_number))
         node.update_measure_period = 1
         node.run()
-        measure_queues[node.local] = Queue(maxlen=1)
-        node.update_measure_cb = allocation_updated
+        measure_queues[node.local] = Queue(1)
+        if run_pp:
+            node.update_measure_cb = allocation_updated
         node.joined_callback = joined_network
         addr_to_name[node.local] = net.load['name'][i]
         net.load['name'][i] = "{}".format(node.local)
         nodes.append(node)
 
-    for node in nodes:
-        node.schedule(node.send_join, {'dst': '{}'.format(remote)})
+    if join_network:
+        for node in nodes:
+            node.schedule(node.send_join, {'dst': '{}'.format(remote)}, i/10)
     return nodes
 
 
@@ -231,7 +283,8 @@ allocator = sim.create_node(
     ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
 initial_time = time()
 allocator.identity = allocator.local
-allocator.allocation_updated = allocator_measure_updated
+if optimize:
+    allocator.allocation_updated = allocator_measure_updated
 allocator.run()
 
 if case in cases.keys():
@@ -241,7 +294,7 @@ else:
 
 nodes = create_nodes(net, allocator.local)
 print("waiting for {} nodes to join network".format(len(nodes)))
-while len(set(network_size)) < len(nodes) and not terminate.is_set():
+while len(set(network_size)) < len(nodes) and not terminate.is_set() and join_network:
     sleep(1)
     continue
 print("Network ready")
@@ -294,7 +347,7 @@ def worker_optimize(fn, args: list, cycle: float):
 allocator.schedule(shutdown, args=[None, None], delay=simtime)
 with Executor(max_workers=200) as executor:
     try:
-        if pp:
+        if run_pp:
             print("Running power flow analysis")
             executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, False, None, initial_time, None], 0)
         if optimize:
