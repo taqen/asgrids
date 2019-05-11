@@ -54,6 +54,13 @@ parser.add_argument('--sim-time', type=float,
 parser.add_argument('--output', type=str,
                     help='Total simulation time',
                     default='simulation.log')
+parser.add_argument('--initial-port', type=int,
+                    help='Initial network port',
+                    default=4000)
+parser.add_argument('--address', type=str,
+                    help='network address',
+                    default="127.0.0.1")
+
 args = parser.parse_args()
 
 with_pv = args.with_pv
@@ -67,23 +74,24 @@ pp_cycle = args.pp_cycle
 optimizer = args.optimizer
 simtime = args.sim_time
 output = args.output
-
+initial_port = args.initial_port
+address = args.address
 
 # logger_a will log all allocations and measurements received by the allocator
 # logger_b will log all allocations and measurements known by each node
-logger_a = None
+# logger_a = None
 logger_n = None
 
 if output is not '':
-    logger_a = logging.getLogger('SmartGridSimulationA')
-    logger_a.setLevel(logging.INFO)
+    # logger_a = logging.getLogger('SmartGridSimulationA')
+    # logger_a.setLevel(logging.INFO)
     logger_n = logging.getLogger('SmartGridSimulationN')
     logger_n.setLevel(logging.INFO)
-    fh_a = logging.FileHandler(output.split('log')[0] +'a.log', mode='w')
-    fh_a.setLevel(logging.INFO)
-    fh_n = logging.FileHandler(output.split('log')[0] + 'b.log', mode='w')
+    # fh_a = logging.FileHandler(output.split('log')[0] +'a.log', mode='w')
+    # fh_a.setLevel(logging.INFO)
+    fh_n = logging.FileHandler(output, mode='w')
     fh_n.setLevel(logging.INFO)
-    logger_a.addHandler(fh_a)
+    # logger_a.addHandler(fh_a)
     logger_n.addHandler(fh_n)
 
 print("WITH PV: {}".format(with_pv))
@@ -118,7 +126,7 @@ def gen_port(initial_port):
         port = port + 1
 
 
-port = gen_port(5555)
+port = gen_port(initial_port)
 
 
 def csv_generator(file, columns=None):
@@ -162,9 +170,9 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
         allocations_queue.put(
             [timestamp, node_addr, allocation.p_value, allocation.q_value])
         measure = measure_queues[node_addr].get_nowait()
-        if logger_n is not None:
-            logger_n.info('{}\t{}\t{}\t{}\t{}'.format(
-                time(), addr_to_name[node_addr], allocation.p_value, allocation.q_value, measure))
+        # if logger_n is not None:
+        #     logger_n.info('{}\t{}\t{}\t{}\t{}'.format(
+        #         time(), addr_to_name[node_addr], allocation.p_value, allocation.q_value, measure))
         return measure
     except Empty:
         return None
@@ -179,16 +187,16 @@ def allocator_measure_updated(allocation: list, node_addr: str):
         voltage_values.put_nowait([node_addr, v])
     except Full:
         print("voltage_values is full")
-    if logger_a is not None:
-        logger_a.info('{}\t{}\t{}\t{}\t{}'.format(
-            time(), addr_to_name[node_addr], allocation[0].p_value, allocation[0].q_value, v))
+    # if logger_a is not None:
+    #     logger_a.info('{}\t{}\t{}\t{}\t{}'.format(
+    #         time(), addr_to_name[node_addr], allocation[0].p_value, allocation[0].q_value, v))
 
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
     nodes = list()
     for i in range(len(net.load.index)):
-        node = sim.create_node('load', '127.0.0.1:{}'.format(next(port)))
+        node = sim.create_node('load', '{}:{}'.format(address, next(port)))
         node.update_measure_period = 1
         node.run()
         measure_queues[node.local] = Queue(maxsize=1)
@@ -211,7 +219,7 @@ def create_nodes(net, remote):
 
 
 allocator = sim.create_node(
-    ntype='allocator', addr="127.0.0.1:{}".format(next(port)))
+    ntype='allocator', addr="{}:{}".format(address, next(port)))
 initial_time = time()
 allocator.identity = allocator.local
 allocator.allocation_updated = allocator_measure_updated
@@ -280,7 +288,7 @@ with Executor(max_workers=200) as executor:
     try:
         # net_copy = deepcopy(net)
         print("Running power flow analysis")
-        executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, None], pp_cycle)
+        executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, logger_n], pp_cycle)
         if with_optimize:
             # net_copy = deepcopy(net)
             if optimizer == 'pi':
