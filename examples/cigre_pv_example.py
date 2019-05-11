@@ -60,9 +60,11 @@ parser.add_argument('--initial-port', type=int,
 parser.add_argument('--address', type=str,
                     help='network address',
                     default="127.0.0.1")
-
+parser.add_argument('--skip-join', action="store_true",
+                    help='skip waiting for join')
 args = parser.parse_args()
 
+skip_join = args.skip_join
 with_pv = args.with_pv
 CSV_FILE = args.csv_file
 JSON_FILE = args.json_file
@@ -235,7 +237,7 @@ net.load['controllable'] = False
 
 nodes = create_nodes(net, allocator.local)
 print("waiting for {} nodes to join network".format(len(nodes)))
-while len(set(network_size)) < len(nodes):
+while len(set(network_size)) < len(nodes) and not skip_join:
     sleep(1)
     continue
 print("Network ready")
