@@ -1,7 +1,7 @@
 from queue import Queue, Full, Empty
 from threading import Event, Lock
 from time import monotonic as time, sleep
-from sens import SmartGridSimulation, Allocation, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
+from sens import SmartGridSimulation, Allocation#, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp
@@ -22,6 +22,7 @@ plot_values: Queue = Queue()
 voltage_values: Queue = Queue()
 allocation_generators: dict = {}
 lock = Lock()
+initial_time = None
 
 parser = argparse.ArgumentParser(
     description='Realtime Time multi-agent simulation of CIGRE LV network')
@@ -62,8 +63,13 @@ parser.add_argument('--address', type=str,
                     default="127.0.0.1")
 parser.add_argument('--skip-join', action="store_true",
                     help='skip waiting for join')
+parser.add_argument('--max-vm', type=float,
+                    help='maxium voltage that triggers optimization',
+                    default=1.01)
+
 args = parser.parse_args()
 
+max_vm = args.max_vm
 skip_join = args.skip_join
 with_pv = args.with_pv
 CSV_FILE = args.csv_file
@@ -143,6 +149,7 @@ def csv_generator(file, columns=None):
 
 
 def generate_allocations(node, old_allocation, now=0):
+    real_now = time() - initial_time
     if node not in allocation_generators:
         allocation_generators[node] = \
             csv_generator(CSV_FILE,
@@ -153,7 +160,7 @@ def generate_allocations(node, old_allocation, now=0):
     if not ('PV' in addr_to_name[node] and with_pv is False):
         while True:
             t, p, q, d = next(allocation_generators[node])
-            if t >= now:
+            if t >= real_now:
                 break
     allocation = Allocation(0, p, q, d)
     return allocation
@@ -222,7 +229,6 @@ def create_nodes(net, remote):
 
 allocator = sim.create_node(
     ntype='allocator', addr="{}:{}".format(address, next(port)))
-initial_time = time()
 allocator.identity = allocator.local
 allocator.allocation_updated = allocator_measure_updated
 allocator.run()
@@ -240,7 +246,9 @@ print("waiting for {} nodes to join network".format(len(nodes)))
 while len(set(network_size)) < len(nodes) and not skip_join:
     sleep(1)
     continue
+
 print("Network ready")
+initial_time = time()
 
 for node in nodes:
     allocation = Allocation(
@@ -290,15 +298,15 @@ with Executor(max_workers=200) as executor:
     try:
         # net_copy = deepcopy(net)
         print("Running power flow analysis")
-        executor.submit(worker_pp, runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, logger_n], pp_cycle)
+        executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, logger_n], pp_cycle)
         if with_optimize:
             # net_copy = deepcopy(net)
             if optimizer == 'pi':
                 print("Optimizing network in realtime with PI")
-                executor.submit(worker_optimize, optimize_network_pi, [allocator, voltage_values, optimize_cycle], optimize_cycle)
+                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle, max_vm], optimize_cycle)
             elif optimizer == 'opf':
                 print("Optimizing network in realtime with OPF")
-                executor.submit(worker_optimize, optimize_network_opf, [allocator, voltage_values, optimize_cycle], optimize_cycle)
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle, max_vm], optimize_cycle)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
 
