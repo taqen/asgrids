@@ -223,6 +223,8 @@ class Agent(object, metaclass=ABCMeta):
         self.comm.stop()
 
     def interrupt_event(self, event):
+        if event is None:
+            return
         try:
             event.fail(BaseException("Interrupted"))
         except Exception as e:
