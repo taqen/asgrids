@@ -1,7 +1,7 @@
 from queue import Queue, Full, Empty
 from threading import Event, Lock
 from time import monotonic as time, sleep
-from sens import SmartGridSimulation, Allocation#, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
+from sens import SmartGridSimulation, Allocation, Packet#, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp
@@ -18,11 +18,13 @@ addr_to_name: dict = {}
 allocations_queue: Queue = Queue()
 measure_queues: dict = {}
 network_size: list = []
+network_ready: Queue = Queue(1)
 plot_values: Queue = Queue()
 voltage_values: Queue = Queue()
 allocation_generators: dict = {}
 lock = Lock()
 initial_time = None
+nodes: list = []
 
 parser = argparse.ArgumentParser(
     description='Realtime Time multi-agent simulation of CIGRE LV network')
@@ -66,9 +68,13 @@ parser.add_argument('--skip-join', action="store_true",
 parser.add_argument('--max-vm', type=float,
                     help='maxium voltage that triggers optimization',
                     default=1.01)
-
+parser.add_argument('--accel', type=float,
+                    help='maxium voltage that triggers optimization',
+                    default=1.0)
 args = parser.parse_args()
 
+accel=args.accel
+assert accel > 0
 max_vm = args.max_vm
 skip_join = args.skip_join
 with_pv = args.with_pv
@@ -156,19 +162,27 @@ def generate_allocations(node, old_allocation, now=0):
                           columns=['%s_P' % addr_to_name[node],
                                    '%s_Q' % addr_to_name[node]])
     # print("generating allocation for %s"%addr_to_name[node])
-    p, q, d = [0, 0, 10]
-    if not ('PV' in addr_to_name[node] and with_pv is False):
-        while True:
+    p, q, d = [0, 0, 1*accel]
+    if 'PV' in addr_to_name[node]:
+        if with_pv:
             t, p, q, d = next(allocation_generators[node])
-            if t >= real_now:
-                break
-    allocation = Allocation(0, p, q, d)
+    else:
+        t, p, q, d = next(allocation_generators[node])
+    # if not ('PV' in addr_to_name[node] and with_pv is False):
+    #     t, p, q, d = next(allocation_generators[node])
+        # while True:
+        #     t, p, q, d = next(allocation_generators[node])
+        #     if t*accel >= real_now:
+        #         break
+    allocation = Allocation(0, p, q, 1)
     return allocation
 
 
 def joined_network(src, dst):
     # print("{} joined network".format(src))
     network_size.append(src)
+    if len(network_size) == len(nodes) and len(nodes) != 0:
+        network_ready.put(1)
 
 
 def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
@@ -203,7 +217,6 @@ def allocator_measure_updated(allocation: list, node_addr: str):
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
-    nodes = list()
     for i in range(len(net.load.index)):
         node = sim.create_node('load', '{}:{}'.format(address, next(port)))
         node.update_measure_period = 1
@@ -223,17 +236,19 @@ def create_nodes(net, remote):
         nodes.append(node)
 
     for node in nodes:
-        node.schedule(node.send_join, {'dst': '{}'.format(remote)})
+        packet = Packet('join_ack', src=allocator.local, dst=node.local)
+        node.handle_receive(packet)
     return nodes
 
 
 allocator = sim.create_node(
     ntype='allocator', addr="{}:{}".format(address, next(port)))
 allocator.identity = allocator.local
-allocator.allocation_updated = allocator_measure_updated
 allocator.run()
 
 net = pp.from_json(JSON_FILE)
+net.bus['min_vm_pu'] = 2 - max_vm
+net.bus['max_vm_pu'] = max_vm
 net.load['min_p_kw'] = None
 net.load['min_q_kvar'] = None
 net.load['max_p_kw'] = None
@@ -242,14 +257,12 @@ net.load['controllable'] = False
 
 
 nodes = create_nodes(net, allocator.local)
-print("waiting for {} nodes to join network".format(len(nodes)))
-while len(set(network_size)) < len(nodes) and not skip_join:
-    sleep(1)
-    continue
-
+if not skip_join:
+    print("waiting for {} nodes to join network".format(len(nodes)))
+    network_ready.get()
 print("Network ready")
 initial_time = time()
-
+allocator.allocation_updated = allocator_measure_updated
 for node in nodes:
     allocation = Allocation(
         0,
