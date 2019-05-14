@@ -270,7 +270,7 @@ class SmartGridSimulation(object):
 
     def optimize_network_pi(self, net, allocator, voltage_values: Queue, duty_cycle=10, max_vm=1.01):
         if not hasattr(self, 'controller'):
-            print("Creating PIController")
+            print("Creating PIController: max_vm = %f"%max_vm)
             self.controller = PIController(maximum_voltage=400*max_vm, duration=duty_cycle)
         nids = []
         gen_vs: list = []  # List of generators(PV) current voltages
@@ -290,7 +290,7 @@ class SmartGridSimulation(object):
                     print("Terminating optimize_network_pi")
                     return
                 values[nid] = v
-                if v >= max_vm:
+                if v is not None and v >= max_vm:
                     optimize = True
         except Exception as e:
             print(e)
