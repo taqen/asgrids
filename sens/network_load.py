@@ -65,7 +65,8 @@ class NetworkLoad(Agent):
         if msg_type == 'join_ack':
             self.logger.info("Joined successfully allocator {}".format(p.src))
             self.remote = p.src
-            self.interrupt_event(self.join_ack_timer)
+            if self.join_ack_timer:
+                self.interrupt_event(self.join_ack_timer)
             if self.joined_callback is not None:
                 self.joined_callback(self.local, self.remote)
         elif msg_type == 'allocation':

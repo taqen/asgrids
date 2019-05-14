@@ -121,15 +121,15 @@ class NetworkAllocator(Agent):
         packet = Packet(ptype='allocation', payload=a, src=self.local, dst=nid)
 
         # Creating Event that is triggered if no ack is received before a timeout
-        msg='no ack from {} for allocation {}'.format(nid, a.aid)
-        try:
-            self.alloc_timeouts[a.aid] = self.schedule(
-                lambda msg: self.logger.warning(msg),
-                [msg],
-                delay=self.alloc_ack_timeout,
-                callbacks=[lambda aid=a.aid: self.alloc_timeouts.pop(aid)])
-        except Exception as e:
-            self.logger.warning(e)
+        # msg='no ack from {} for allocation {}'.format(nid, a.aid)
+        # try:
+        #     self.alloc_timeouts[a.aid] = self.schedule(
+        #         lambda msg: self.logger.warning(msg),
+        #         [msg],
+        #         delay=self.alloc_ack_timeout,
+        #         callbacks=[lambda aid=a.aid: self.alloc_timeouts.pop(aid)])
+        # except Exception as e:
+        #     self.logger.warning(e)
         self.send(packet, remote=nid)
 
     def send_join_ack(self, dst):
