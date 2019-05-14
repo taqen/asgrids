@@ -24,12 +24,14 @@ parser.add_argument('--runs', nargs='+', type=int,
                     default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 parser.add_argument('--losses', nargs='+', type=int,
                     default=[0, 5, 10, 15, 20, 40, 50, 60])
-
+parser.add_argument('--max-vm', type=float,
+                    default=1.05)
 args = parser.parse_args()
 losses = args.losses
 runs = args.runs
 with_pi = args.with_pi
 with_opf = args.with_opf
+max_vm = args.max_vm
 if not (with_pi or with_opf):
     print("Nothing to plot. You might wanna select PI and/or OPF flags.")
     exit()
@@ -63,7 +65,7 @@ data.drop(data[data[0]<tslice[0]].index, inplace=True)
 data.reset_index(drop=True, inplace=True)
 data.drop(data[data[0]>tslice[1]].index, inplace=True)
 data.reset_index(drop=True, inplace=True)
-hits_pv =  [data[data[2]>=1.01][2].count()/data[2].count()]
+hits_pv =  [data[data[2]>=max_vm][2].count()/data[2].count()]
 
 
 for j in losses:
@@ -73,7 +75,7 @@ for j in losses:
     for i in runs:
         if with_opf:
             try:
-                data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss_5.{}.log'.format(j,i)), header=None, delimiter='\t')
+                data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
                 data.drop(data[data[0].str.contains('LOAD')].index, inplace=True)
                 data[0]=data[0].str.replace('VOLTAGE ', '')
                 data[0]=pd.to_numeric(data[0],errors='coerce')
@@ -90,12 +92,12 @@ for j in losses:
                 data.reset_index(drop=True, inplace=True)
                 data.drop(data[data[0]>tslice[1]].index, inplace=True)
                 data.reset_index(drop=True, inplace=True)
-                hits_opf[j] = hits_opf[j] + [data[data[2]>=1.01][2].count()/data[2].count()]
+                hits_opf[j] = hits_opf[j] + [data[data[2]>=max_vm][2].count()/data[2].count()]
             except Exception as e:
                 print("ERROR:", e)
         if with_pi:
             try:
-                data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss_5.{}.log'.format(j,i)), header=None, delimiter='\t')
+                data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
                 data.drop(data[data[0].str.contains('LOAD')].index, inplace=True)
                 data[0]=data[0].str.replace('VOLTAGE ', '')
                 data[0]=pd.to_numeric(data[0],errors='coerce')
@@ -113,7 +115,7 @@ for j in losses:
                 data.drop(data[data[0]>tslice[1]].index, inplace=True)
                 data.reset_index(drop=True, inplace=True)
 
-                hits_pi[j] = hits_pi[j] + [data[data[2]>=1.01][2].count()/data[2].count()]
+                hits_pi[j] = hits_pi[j] + [data[data[2]>=max_vm][2].count()/data[2].count()]
             except Exception as e:
                 print(e)
 
