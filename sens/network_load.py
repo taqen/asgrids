@@ -33,14 +33,15 @@ class NetworkLoad(Agent):
         self.next_allocation = None
         self.join_ack_timeout = 3
         self.join_ack_timer = None
-
+        self.get_allocation_event = None
+        self.update_measure_event = None
         self.max_allocation = Allocation(p_value=float("inf"), q_value=float("inf"))
 
     def run(self):
         super(NetworkLoad, self).run()
         try:
-            self.schedule(self.get_allocation, delay=self.generate_allocations_period)
-            self.schedule(self.update_measure, delay=self.update_measure_period)
+            self.get_allocation_event = self.schedule(self.get_allocation, delay=self.generate_allocations_period)
+            self.update_measure_event = self.schedule(self.update_measure, delay=self.update_measure_period)
         except Exception as e:
             self.logger.warning("network load run: ".format(e))
 
@@ -134,7 +135,7 @@ class NetworkLoad(Agent):
                 self.curr_measure = measure
                 self.logger.info("New measure is {}v".format(measure))
         self.report_measure()
-        self.schedule(action=self.update_measure, delay=self.update_measure_period)
+        self.update_measure_event = self.schedule(action=self.update_measure, delay=self.update_measure_period)
 
     def report_measure(self):
         if self.remote is not None:
@@ -189,4 +190,7 @@ class NetworkLoad(Agent):
         # Stop underlying simpy event loop
         self.logger.info("Stopping Simpy")
         self.remote = None
+        self.interrupt_event(self.join_ack_timer)
+        self.interrupt_event(self.update_measure_event)
+        self.interrupt_event(self.next_allocation)
         super(NetworkLoad, self).stop()
