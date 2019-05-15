@@ -7,6 +7,18 @@ import os
 from pandas.api.types import is_string_dtype
 import pickle
 #%%
+losses = [0, 10, 20, 30, 60]
+runs = [1, 2, 3, 4, 5]
+with_pi = True
+with_opf = True
+max_vm = 1.05
+results = './examples/asgrids'
+plot_type = 'barplot'
+output = './examples/bars_loss.png'
+tslice = [0, Inf]
+width = 1
+
+#%%
 parser = argparse.ArgumentParser(
     description='Plotting ECDF')
 parser.add_argument('--slice', type=str,
@@ -155,7 +167,7 @@ if plot_type is 'boxplot':
 
 else:
     ax = fig.add_subplot(111)
-    x = [0, 10, 20, 30, 40]
+    x = [0, 5, 10, 15, 20]
     pv_plot = ax.plot(x, [hits_pv for i in x], color='red')
     if with_opf:
         opf_bar = ax.bar([i-width/2 for i in x], [mean(i) for i in hits_opf.values()], yerr=[std(i) for i in hits_opf.values()], color='blue', width=width)
@@ -175,11 +187,14 @@ else:
         legend_labels = ["PI Control"] + legend_labels
     ax.set_xticks(x)
     ax.set_xticklabels(losses)
-    ax.set_yticks([i for i in arange(0, max(hits_pv)+0.02, 0.02)])
-    ax.set_yticklabels(["%0.1f%%"%(j*100) for j in arange(0, max(hits_pv)+0.02, 0.02)])
+    ax.set_ylim(0.04, 0.08)
+    # yticks = [i for i in arange(0, max(hits_pv)+0.02, 0.01)]
+    yticks = ax.get_yticks()
+    ax.set_yticklabels(["%0.1f%%"%(j*100) for j in yticks])
     ax.legend(legend_items, legend_labels, loc="lower left")
     ax.set_ylabel("Voltage violations (%)")
     ax.set_xlabel("Packet loss (%)")
+    ax.set_ylim(0.04, 0.08)
 #%%
 plt.tight_layout()
 plt.savefig(output, dpi=600)
