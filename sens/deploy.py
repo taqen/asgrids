@@ -185,15 +185,15 @@ class SmartGridSimulation(object):
                     net.load.loc[net.load['name'] == name, 'q_kvar'] = q_kw
                     changed = True
 
-                if changed:
-                    pp.runpp(net, init='results', verbose=True)
-                    if logger is not None and changed:
-                        T = time()
-                        logger.info('LOAD {}\t{}\t{}'.format(
-                                T, name, p_kw))
-                        for i in net.bus.index:
-                            logger.info('VOLTAGE {}\t{}\t{}'.format(
-                                T, net.bus.loc[i, 'name'], net.res_bus.loc[i, 'vm_pu']))
+            if changed:
+                pp.runpp(net, init='results', verbose=True)
+                if logger is not None and changed:
+                    T = time()
+                    logger.info('LOAD {}\t{}\t{}'.format(
+                            T, name, p_kw))
+                    for i in net.bus.index:
+                        logger.info('VOLTAGE {}\t{}\t{}'.format(
+                            T, net.bus.loc[i, 'name'], net.res_bus.loc[i, 'vm_pu']))
                 else:
                     return
         except LoadflowNotConverged as e:
@@ -268,7 +268,7 @@ class SmartGridSimulation(object):
                 print("Terminating OPF controller")
                 raise(e)
 
-    def optimize_network_pi(self, net, allocator, voltage_values: Queue, duty_cycle=10, max_vm=1.01):
+    def optimize_network_pi(self, net, allocator, voltage_values: Queue, duty_cycle=10, max_vm=1.01, accel=1.0):
         if not hasattr(self, 'controller'):
             print("Creating PIController: max_vm = %f"%max_vm)
             self.controller = PIController(maximum_voltage=400*max_vm, duration=duty_cycle)
