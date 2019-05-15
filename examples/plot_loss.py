@@ -1,10 +1,12 @@
+#%%
 import pandas as pd
 import matplotlib.pyplot as plt
 from numpy import std, ceil, arange, sort, Inf, mean
 import argparse
 import os
 from pandas.api.types import is_string_dtype
-
+import pickle
+#%%
 parser = argparse.ArgumentParser(
     description='Plotting ECDF')
 parser.add_argument('--slice', type=str,
@@ -29,8 +31,13 @@ parser.add_argument('--max-vm', type=float,
                     default=1.05)
 parser.add_argument('--width', type=float,
                     default=1)
+parser.add_argument('--save', type=str, default='')
+parser.add_argument('--load', type=str, default='')
 
+#%%
 args = parser.parse_args()
+save = args.save
+load = args.load
 losses = args.losses
 runs = args.runs
 with_pi = args.with_pi
@@ -39,7 +46,6 @@ max_vm = args.max_vm
 if not (with_pi or with_opf):
     print("Nothing to plot. You might wanna select PI and/or OPF flags.")
     exit()
-
 results = args.results
 plot_type = args.type
 output = args.output
@@ -52,7 +58,9 @@ else:
     tslice = [0, Inf]
 
 assert len(tslice) == 2
+width=args.width
 
+#%%
 def calculate_rate(data, slice_range: list = [0, Inf]):
         if is_string_dtype(data[0]):
             data.drop(data[data[0].str.contains('LOAD')].index, inplace=True)
@@ -72,16 +80,15 @@ def calculate_rate(data, slice_range: list = [0, Inf]):
             data.reset_index(drop=True, inplace=True)
             data.drop(data[data[0]>tslice[1]].index, inplace=True)
             data.reset_index(drop=True, inplace=True)
-        return data[data[2]>=1.01][2].count()/data[2].count()
+        return data[data[2]>=max_vm][2].count()/data[2].count()
 
-width=args.width
-
+#%%
 hits_opf: dict = {}
 hits_pi: dict = {}
 
 data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
 hits_pv =  [calculate_rate(data)]
-
+#%%
 for j in losses:
     hits_opf[j] = []
     hits_pi[j] = []
@@ -89,17 +96,18 @@ for j in losses:
     for i in runs:
         if with_opf:
             try:
-                data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss_5.{}.log'.format(j,i)), header=None, delimiter='\t')
+                data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
                 hits_opf[j] = hits_opf[j] + [calculate_rate(data)]
             except Exception as e:
                 print("ERROR:", e)
         if with_pi:
             try:
-                data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss_5.{}.log'.format(j,i)), header=None, delimiter='\t')
+                data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
                 hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
             except Exception as e:
                 print(e)
 
+#%%
 fig = plt.figure()
 print("Generating %s"%plot_type)
 if plot_type is 'boxplot':
@@ -121,7 +129,7 @@ if plot_type is 'boxplot':
         # ax = ax_opf
         for v in hits_opf.values():
             box.append(v)
-        opf_box=ax.boxplot(box, showfliers=False, notch=True, patch_artist=True, boxprops=dict(facecolor="magenta"))
+        opf_box=ax.boxplot(box, showfliers=False, notch=True, patch_artist=True, boxprops=dict(facecolor="green"))
         pv_plot = ax.plot([0, 20], [hits_pv, hits_pv], color='red')
         ax.scatter(ax.get_xticks(), [mean(i) for i in hits_opf.values()])
         ax.set_xlabel('packet loss rate(%)')
@@ -138,6 +146,7 @@ if plot_type is 'boxplot':
         ax.scatter(ax.get_xticks(), [mean(i) for i in hits_pi.values()])
         ax.set_xlabel('packet loss rate(%)')
         ax.set_ylabel('Voltage violation rate')
+        ax.set_xticks([losses])
         ax.set_xticklabels(["{}%".format(j) for j in losses])
         ax.set_yticks([i for i in arange(0, max(hits_pv)+0.02, 0.1)])
         ax.set_yticklabels(["%0.1f%%"%(j*100) for j in arange(0, max(hits_pv)+0.02, 0.1)])
@@ -146,11 +155,12 @@ if plot_type is 'boxplot':
 
 else:
     ax = fig.add_subplot(111)
-    pv_plot = ax.plot(losses, [hits_pv for i in losses], color='red')
+    x = [0, 10, 20, 30, 40]
+    pv_plot = ax.plot(x, [hits_pv for i in x], color='red')
     if with_opf:
-        opf_bar = ax.bar([i-width/2 for i in hits_opf.keys()], [mean(i) for i in hits_opf.values()], yerr=[std(i) for i in hits_opf.values()], color='blue', width=width)
+        opf_bar = ax.bar([i-width/2 for i in x], [mean(i) for i in hits_opf.values()], yerr=[std(i) for i in hits_opf.values()], color='blue', width=width)
     if with_pi:
-        pi_bar = ax.bar([i+width/2 for i in hits_pi.keys()], [mean(i) for i in hits_pi.values()], yerr=[std(i) for i in hits_pi.values()], color='magenta', width=width)
+        pi_bar = ax.bar([i+width/2 for i in x], [mean(i) for i in hits_pi.values()], yerr=[std(i) for i in hits_pi.values()], color='green', width=width)
 
 
     legend_items = [pv_plot[0]]
@@ -163,14 +173,14 @@ else:
         legend_labels = ["OPF Control"] + legend_labels
     if with_pi:
         legend_labels = ["PI Control"] + legend_labels
-    
-    ax.set_yticks([i for i in arange(0, max(hits_pv)+0.02, 0.1)])
-    ax.set_yticklabels(["%0.1f%%"%(j*100) for j in arange(0, max(hits_pv)+0.02, 0.1)])
-    ax.legend(legend_items, legend_labels, loc="upper left")
-    # ax.set_yticklabels(["%0.1f%%"%(j*100) for j in ax.get_yticks()])
-    # ax.plot([i for i in hits_opf.keys()],[std(i) for i in hits_opf.values()])
-    # ax.plot([i for i in hits_pi.keys()],[std(i) for i in hits_pi.values()])
-
+    ax.set_xticks(x)
+    ax.set_xticklabels(losses)
+    ax.set_yticks([i for i in arange(0, max(hits_pv)+0.02, 0.02)])
+    ax.set_yticklabels(["%0.1f%%"%(j*100) for j in arange(0, max(hits_pv)+0.02, 0.02)])
+    ax.legend(legend_items, legend_labels, loc="lower left")
+    ax.set_ylabel("Voltage violations (%)")
+    ax.set_xlabel("Packet loss (%)")
+#%%
 plt.tight_layout()
 plt.savefig(output, dpi=600)
 plt.show()
