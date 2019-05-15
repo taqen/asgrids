@@ -14,7 +14,7 @@ import numpy as np
 import pandapower as pp
 import pandapower.networks as pn
 import pandas as pd
-from sens import Allocation, SmartGridSimulation
+from sens import Allocation, SmartGridSimulation, Packet
 
 
 parser = argparse.ArgumentParser(
@@ -24,7 +24,7 @@ parser.add_argument('--case', type=str,
                         case9,case14,case30,case_ieee30, \
                         case33bw,case39,case57,case118,case300',
                     default='case6ww')
-parser.add_argument('--simtime', type=float,
+parser.add_argument('--sim-time', type=float,
                     help='simulation time',
                     default=30)
 parser.add_argument('--opf-cycle', type=float,
@@ -45,10 +45,16 @@ parser.add_argument('--skip-join', action='store_true')
 parser.add_argument('--pp-cycle', type=int,
                     help='CSV database with loads timeseries',
                     default=1)
-
+parser.add_argument('--optimizer', type=str,
+                    help='OPF or PI',
+                    default='pi')
+parser.add_argument('--optimize-cycle', type=float,
+                    help='in s',
+                    default=6)
 args = parser.parse_args()
 case=args.case
-simtime = args.simtime
+optimizer = args.optimizer
+simtime = args.sim_time
 cycle = args.opf_cycle
 monitor = args.monitor
 optimize = args.optimize
@@ -57,6 +63,8 @@ nNodes = args.nodes
 initial_port = args.initial_port
 skip_join = args.skip_join
 pp_cycle = args.pp_cycle
+optimize_cycle = args.optimize_cycle
+
 nodes: list = []
 
 print("------------------------------------\n\
@@ -108,11 +116,11 @@ def monitor_memory(cycle=1):
 
 
 addr_to_name: dict = {}
-allocations_queue: Queue = Queue(100)
+allocations_queue: Queue = Queue()
 measure_queues: dict = {}
 network_size: list = []
 network_ready: Queue = Queue(1)
-voltage_values: Queue = Queue(100)
+voltage_values: Queue = Queue()
 allocation_generators: dict = {}
 lock = Lock()
 
@@ -121,6 +129,7 @@ sim: SmartGridSimulation = SmartGridSimulation()
 # Handle ctrl-c interruptin
 def shutdown(x, y):
     print("Shutdown")
+    sim.stop()
     terminate.set()
     allocations_queue.put([0, 0, 0, 0])
     voltage_values.put([0,0])
@@ -128,7 +137,6 @@ def shutdown(x, y):
         network_ready.put_nowait(1)
     except:
         pass
-    sim.stop()
 
 signal(SIGINT, shutdown)
 
@@ -230,10 +238,9 @@ def create_nodes(net, remote):
             1)
         node.curr_allocation = allocation
 
-    if not skip_join:
-        for node in nodes:
-            allocator.send_join_ack(node.local)
-            # node.schedule(node.send_join, {'dst': '{}'.format(remote)})
+    for node in nodes:
+        packet = Packet('join_ack', src=allocator.local, dst=node.local)
+        node.handle_receive(packet)
     return nodes
 
 allocator = sim.create_node(
@@ -301,8 +308,14 @@ with Executor(max_workers=200) as executor:
             print("Running power flow analysis")
             executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, initial_time, (True if pp_cycle is 0 else False), None], pp_cycle)
         if optimize:
-            print("Optimizing network in realtime with OPF")
-            executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, cycle, 1.01], cycle)
+            if optimizer == 'pi':
+                print("Optimizing network in realtime with PI")
+                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle], optimize_cycle)
+            elif optimizer == 'opf':
+                print("Optimizing network in realtime with OPF")
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle], optimize_cycle)
+            else:
+                raise ValueError("optimizer has to be either 'pi' or 'opf'")
         if monitor:
             monitor_memory(10)
 
