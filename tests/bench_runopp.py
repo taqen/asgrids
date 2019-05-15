@@ -12,13 +12,13 @@ from joblib import Parallel, delayed
 
 # %%
 cases ={
-    "case6ww":pn.case6ww,
+    # "case6ww":pn.case6ww,
     "case9":pn.case9,
     "case14":pn.case14,
     "case30":pn.case30,
-    "case_ieee30":pn.case_ieee30,
-    "case33bw":pn.case33bw,
-    "case39":pn.case39,
+    # "case_ieee30":pn.case_ieee30,
+    # "case33bw":pn.case33bw,
+    # "case39":pn.case39,
     "case57":pn.case57,
     "case118":pn.case118,
     "case300":pn.case300,
@@ -38,7 +38,7 @@ def run(func, net, repeat=1):
     t = timeit.Timer("update_net()", globals=locals(), setup="import pandapower as pp")
     try:
         bench = t.repeat(repeat=repeat, number=1)
-        print([len(net.load.index), bench])
+        # print([len(net.load.index), bench])
         return [len(net.load.index), bench]
     except pp.optimal_powerflow.OPFNotConverged:
         print("optimal flow calculation for {} didn't converge")
@@ -51,35 +51,42 @@ results = Parallel(n_jobs=8)(
     delayed(run)(pp.runpp, cases[case](), 10) for case in cases.keys())
 
 # %%
+width=0.3
 fig, ax = plt.subplots(figsize=(10, 5))
 index = np.arange(len(cases))
 means = [np.mean(result[1]) for result in results]
 stds = [np.std(result[1]) for result in results]
-rects1 = ax.bar(index, means, width=0.35,
-                alpha=0.4, color='b', align='center',
-                yerr=stds, error_kw={'ecolor': '0.3'})
-ax.set_xlabel('IEEE test case')
-ax.set_ylabel('power flow analysis runtime')
+rects1 = ax.bar(index-width/2, means, width=width,
+                alpha=1, color='b',# align='center',
+                yerr=stds)
+ax.set_xlabel('Number of Loads')
+ax.set_ylabel('Power Flow calculation time(s)', color='blue')
 ax.set_xticks(index)
 ax.set_xticklabels((result[0] for result in results))
-fig.tight_layout()
-plt.savefig('pp_time.png', dpi=600)
+ax.xaxis.set_tick_params(labelsize=12)
+ax.yaxis.set_tick_params(labelsize=12)
+# fig.tight_layout()
+# plt.savefig('pp_time.png', dpi=600)
 
 # %%capture
 results = Parallel(n_jobs=8)(
     delayed(run)(pp.runopp, cases[case](), 10) for case in cases.keys())
 
 # %%
-fig, ax = plt.subplots(figsize=(10, 5))
+# fig, ax = plt.subplots(figsize=(10, 5))
+ax2 = ax.twinx()
 index = np.arange(len(cases))
 means = [np.mean(result[1]) for result in results]
 stds = [np.std(result[1]) for result in results]
-rects1 = ax.bar(index, means, width=0.35,
-                alpha=0.4, color='b', align='center',
-                yerr=stds, error_kw={'ecolor': '0.3'})
-ax.set_xlabel('IEEE test case')
-ax.set_ylabel('optimal power flow runtime')
-ax.set_xticks(index)
-ax.set_xticklabels((result[0] for result in results))
+rects1 = ax2.bar(index+width/2, means, width=width,
+                alpha=1, color='green',# align='center',
+                yerr=stds)
+# ax2.set_xlabel('Number of Loads', fontsize=12)
+ax2.set_ylabel('Optimal Power Flow calculation time(s)', fontsize=12, color='green')
+ax2.set_xticks(index)
+# ax.set_xticklabels((result[0] for result in results))
+# ax.xaxis.set_tick_params(labelsize=12)
+ax2.yaxis.set_tick_params(labelsize=12)
 fig.tight_layout()
-plt.savefig('opff_time.png', dpi=600)
+plt.savefig('op_pp_time.png', dpi=600)
+plt.show()
