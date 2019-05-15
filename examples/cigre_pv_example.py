@@ -49,7 +49,7 @@ parser.add_argument('--pp-cycle', type=int,
                     help='CSV database with loads timeseries',
                     default=1)
 parser.add_argument('--optimizer', type=str,
-                    help='CSV database with loads timeseries',
+                    help='OPF or PI',
                     default='pi')
 parser.add_argument('--sim-time', type=float,
                     help='Total simulation time',
@@ -306,20 +306,20 @@ def worker_optimize(fn, args: list, cycle: float):
             sleep(cycle)
     print("Terminating {}".format(fn))
 
-allocator.schedule(shutdown, args=[None, None], delay=simtime)
+allocator.schedule(shutdown, args=[None, None], delay=simtime*accel)
 with Executor(max_workers=200) as executor:
     try:
         # net_copy = deepcopy(net)
         print("Running power flow analysis")
-        executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, logger_n], pp_cycle)
+        executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, logger_n], pp_cycle*accel)
         if with_optimize:
             # net_copy = deepcopy(net)
             if optimizer == 'pi':
                 print("Optimizing network in realtime with PI")
-                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle, max_vm], optimize_cycle)
+                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
             elif optimizer == 'opf':
                 print("Optimizing network in realtime with OPF")
-                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle, max_vm], optimize_cycle)
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
 
