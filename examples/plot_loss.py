@@ -26,9 +26,9 @@ parser.add_argument('--slice', type=str,
                     default='all')
 parser.add_argument('--type', required=False, type=str, 
                     choices=['barplot', 'boxplot'],
-                    default='boxplot')
+                    default='barplot')
 parser.add_argument('--output', required=False, type=str, 
-                    default='boxplot_loss.png')
+                    default='bars_loss.png')
 parser.add_argument('--results', type=str, 
                     default='./raw')
 parser.add_argument('--with-pi', action="store_true",
@@ -45,6 +45,7 @@ parser.add_argument('--width', type=float,
                     default=1)
 parser.add_argument('--save', type=str, default='')
 parser.add_argument('--load', type=str, default='')
+parser.add_argument('--figsize', nargs=2, type=int, default=[200, 100])
 
 #%%
 args = parser.parse_args()
@@ -55,6 +56,7 @@ runs = args.runs
 with_pi = args.with_pi
 with_opf = args.with_opf
 max_vm = args.max_vm
+figsize = args.figsize
 if not (with_pi or with_opf):
     print("Nothing to plot. You might wanna select PI and/or OPF flags.")
     exit()
@@ -97,30 +99,41 @@ def calculate_rate(data, slice_range: list = [0, Inf]):
 #%%
 hits_opf: dict = {}
 hits_pi: dict = {}
+hits_pv: list = []
+if load != '':
+    with open(load, 'rb') as pickle_file:
+        hits_opf, hits_pi, hits_pv = pickle.load(pickle_file)
+else:
+    data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
+    hits_pv =  [calculate_rate(data)]
+    #%%
+    for j in losses:
+        hits_opf[j] = []
+        hits_pi[j] = []
 
-data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
-hits_pv =  [calculate_rate(data)]
+        for i in runs:
+            if with_opf:
+                try:
+                    data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
+                    hits_opf[j] = hits_opf[j] + [calculate_rate(data)]
+                except Exception as e:
+                    print("ERROR:", e)
+            if with_pi:
+                try:
+                    data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
+                    hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
+                except Exception as e:
+                    print(e)
+
+if save != '':
+    try:
+        with open(save, 'wb') as pickle_file:
+            pickle.dump([hits_opf, hits_pi, hits_pv], pickle_file)
+    except Exception as e:
+        print("Erroring pickling to file {}: {}".format(save, e))
+
 #%%
-for j in losses:
-    hits_opf[j] = []
-    hits_pi[j] = []
-
-    for i in runs:
-        if with_opf:
-            try:
-                data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                hits_opf[j] = hits_opf[j] + [calculate_rate(data)]
-            except Exception as e:
-                print("ERROR:", e)
-        if with_pi:
-            try:
-                data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
-            except Exception as e:
-                print(e)
-
-#%%
-fig = plt.figure()
+fig = plt.figure(figsize=figsize)
 print("Generating %s"%plot_type)
 if plot_type is 'boxplot':
     ax_opf = None
@@ -135,7 +148,7 @@ if plot_type is 'boxplot':
     #     ax_opf = fig.add_subplot(111)
     # else:
     #     ax_pi = fig.add_subplot(111)
-    pv_plot = ax.plot([0, 20], [hits_pv, hits_pv], color='red')
+    pv_plot = ax.plot(losses, [hits_pv for i in losses], color='red')
     if with_opf:
         box = []
         # ax = ax_opf
@@ -187,15 +200,14 @@ else:
         legend_labels = ["PI Control"] + legend_labels
     ax.set_xticks(x)
     ax.set_xticklabels(losses)
-    ax.set_ylim(0.04, 0.08)
+    ax.set_ylim(0.02, 0.08)
     # yticks = [i for i in arange(0, max(hits_pv)+0.02, 0.01)]
     yticks = ax.get_yticks()
     ax.set_yticklabels(["%0.1f%%"%(j*100) for j in yticks])
     ax.legend(legend_items, legend_labels, loc="lower left")
-    ax.set_ylabel("Voltage violations (%)")
-    ax.set_xlabel("Packet loss (%)")
-    ax.set_ylim(0.04, 0.08)
-#%%
+    ax.set_ylabel("Voltage violations (%)", fontsize=12)
+    ax.set_xlabel("Packet loss (%)", fontsize=12)
 plt.tight_layout()
-plt.savefig(output, dpi=600)
+plt.savefig(output, figsize=figsize, dpi=600)
+#%%
 plt.show()

@@ -7,6 +7,8 @@ import argparse
 import os
 from pandas.api.types import is_string_dtype
 from itertools import cycle
+import pickle
+
 parser = argparse.ArgumentParser(
     description='Plotting ECDF')
 parser.add_argument('--slice', type=str,
@@ -24,8 +26,12 @@ parser.add_argument('--losses', nargs='+', type=int,
                     default=[0, 5, 10, 15, 20, 40, 50, 60])
 parser.add_argument('--max-vm', type=float,
                     default=1.05)
+parser.add_argument('--save', type=str, default='')
+parser.add_argument('--load', type=str, default='')
 
 args = parser.parse_args()
+save = args.save
+load = args.load
 losses = args.losses
 max_vm = args.max_vm
 runs = args.runs
@@ -60,7 +66,6 @@ def get_voltages(data, slice: list = [0, Inf]):
     data.drop(data[data[0]>287].index, inplace=True)
     data.drop(data[data[0]==0].index, inplace=True)
     data.reset_index(drop=True, inplace=True)
-    print("slicing for opf {}% loss: {}".format(j, i))
     # slicing
     data.drop(data[data[0]<tslice[0]].index, inplace=True)
     data.reset_index(drop=True, inplace=True)
@@ -70,26 +75,36 @@ def get_voltages(data, slice: list = [0, Inf]):
 
 data_opf: dict = {}
 data_pi: dict = {}
-for j in losses:
-    data_opf[j] = []
-    data_pi[j] = []
-    for i in runs:
-        try:
-            if with_opf:
-                print("reading for opf {}% loss: {}".format(j, i))
-                data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                data_opf[j] = data_opf[j] + get_voltages(data)
-            if with_pi:
-                print("reading for pi {}% loss: {}".format(j, i))
-                data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                data_pi[j] = data_pi[j] + get_voltages(data)
-        except Exception as e:
-            print(e)
+data_pv: list = []
 
-print("reading for no control")
-data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
-data_pv =  get_voltages(data)
-ecdf_pv = ECDF(data_pv)
+if load != '':
+    with open(load, 'rb') as pickle_file:
+        data_opf, data_pi, data_pv = pickle.load(pickle_file)
+
+else:
+    for j in losses:
+        data_opf[j] = []
+        data_pi[j] = []
+        for i in runs:
+            try:
+                if with_opf:
+                    print("reading for opf {}% loss: {}".format(j, i))
+                    data = pd.read_csv(os.path.join(results, 'sim_opf_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
+                    data_opf[j] = data_opf[j] + get_voltages(data)
+                if with_pi:
+                    print("reading for pi {}% loss: {}".format(j, i))
+                    data = pd.read_csv(os.path.join(results, 'sim_pi_{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
+                    data_pi[j] = data_opf[j] + get_voltages(data)
+            except Exception as e:
+                print(e)
+    print("reading for no control")
+    data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
+    data_pv =  get_voltages(data)
+
+if save != '':
+    with open(save, 'wb') as pickle_file:
+        pickle.dump([data_opf, data_pi, data_pv], pickle_file)
+
 
 fig = plt.figure()
 ax1 = fig.add_subplot(121)
@@ -101,6 +116,7 @@ colorcycler = cycle(colors)
 bbox = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
 size=10
 i=0
+ecdf_pv = ECDF(data_pv)
 for j in losses:
     if with_opf:
         ecdf_opf = ECDF(data_opf[j])
