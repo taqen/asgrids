@@ -185,42 +185,41 @@ class SmartGridSimulation(object):
                     net.load.loc[net.load['name'] == name, 'q_kvar'] = q_kw
                     changed = True
 
-            if changed:
-                pp.runpp(net, init='results', verbose=True)
-                if logger is not None and changed:
-                    T = time()
-                    logger.info('LOAD {}\t{}\t{}'.format(
-                            T, name, p_kw))
-                    for i in net.bus.index:
-                        logger.info('VOLTAGE {}\t{}\t{}'.format(
-                            T, net.bus.loc[i, 'name'], net.res_bus.loc[i, 'vm_pu']))
-                else:
-                    return
+                if changed:
+                    pp.runpp(net, init='results', verbose=True)
+                    if logger is not None and changed:
+                        T = time()
+                        logger.info('LOAD {}\t{}\t{}'.format(
+                                T, name, p_kw))
+                        for i in net.bus.index:
+                            logger.info('VOLTAGE {}\t{}\t{}'.format(
+                                T, net.bus.loc[i, 'name'], net.res_bus.loc[i, 'vm_pu']))
+                # else:
+                #     return
         except LoadflowNotConverged as e:
             print("runpp failed miserably: {}".format(e))
             return
         except Empty:
             return
         except Exception as e:
-            # exc_type, exc_value, exc_traceback = sys.exc_info()
-            # print("What the fuck at runpp:")
-            # print("*** format_tb:")
-            # print(repr(traceback.format_tb(exc_traceback)))
             print(e)
             return
 
-        # Updating voltage measures for clients and live_plot
-        for node in measure_queues:
-            bus_ind = 0
-            try:
-                bus_ind = net.load['bus'][net.load['name'] == node].item()
-            except Exception as e:
-                raise(e)
-            vm_pu = net.res_bus['vm_pu'][bus_ind].item()
-            try:
-                measure_queues[node].get_nowait()
-            except Empty:
-                measure_queues[node].put(vm_pu)
+        # Updating voltage measures for clients
+        if changed:
+            for node in measure_queues:
+                bus_ind = 0
+                try:
+                    bus_ind = net.load['bus'][net.load['name'] == node].item()
+                except Exception as e:
+                    raise(e)
+                # print("bus_ind: {}".format(bus_ind))
+                # print("net.res_bus: {}".format(net.res_bus))
+                vm_pu = net.res_bus['vm_pu'][bus_ind].item()
+                try:
+                    measure_queues[node].get_nowait()
+                except Empty:
+                    measure_queues[node].put(vm_pu)
 
     def optimize_network_opf(self, net, allocator, voltage_values, duty_cycle=10, max_vm=1.01):
         qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
