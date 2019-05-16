@@ -44,17 +44,17 @@ class NetworkAllocator(Agent):
             self.logger.info("received allocation_ack from {} for allocation {}".format(p.src, p.payload[0].aid))
             # self.add_node(nid=p.src, allocation=p.payload)
             # Interrupting ack timeout event for this allocation
-            try:
-                aid = p.payload[0].aid
-                if aid not in self.alloc_timeouts:
-                    self.logger.warning("received ack, but didn't send an allocation: {}".format(aid))
-                elif self.alloc_timeouts[aid] is not None:
-                    self.logger.debug("canceling ack timeout for allocation: {}".format(aid))
-                    self.interrupt_event(self.alloc_timeouts.pop(aid))
-                else:
-                    self.logger.warning("received duplicate allocation_ack from {}!!!".format(p.src))
-            except Exception as e:
-                self.logger.warning("exception while canceling alloc_timeouts: {}".format(e))
+            # try:
+            #     aid = p.payload[0].aid
+            #     if aid not in self.alloc_timeouts:
+            #         self.logger.warning("received ack, but didn't send an allocation: {}".format(aid))
+            #     elif self.alloc_timeouts[aid] is not None:
+            #         self.logger.debug("canceling ack timeout for allocation: {}".format(aid))
+            #         self.interrupt_event(self.alloc_timeouts.pop(aid))
+            #     else:
+            #         self.logger.warning("received duplicate allocation_ack from {}!!!".format(p.src))
+            # except Exception as e:
+            #     self.logger.warning("exception while canceling alloc_timeouts: {}".format(e))
         elif msg_type == 'leave':
             self.schedule(self.remove_node, {'nid': p.src})
         elif msg_type == 'stop':
