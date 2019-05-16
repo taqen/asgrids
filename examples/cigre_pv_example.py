@@ -115,6 +115,8 @@ if with_optimize:
 print("PP CYCLE: {}".format(pp_cycle))
 print("WITH PLOT: {}".format(plot_voltage))
 print("SIM TIME: {}s".format(simtime))
+print("INITIAL ADDRESS {}:{}".format(address, initial_port))
+print("MAX VM_PU {}".format(max_vm))
 
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
@@ -284,6 +286,7 @@ def worker_pp(fn, args: list, cycle: float):
             exc_type, exc_value, exc_traceback = sys.exc_info()
             print("What the fuck at worker_pp:")
             print(repr(traceback.format_tb(exc_traceback)))
+            print(e)
             return
         if cycle > 0:
             sleep(cycle)
