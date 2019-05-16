@@ -122,7 +122,7 @@ if load != '':
         hits_opf, hits_pi, hits_pv = pickle.load(pickle_file)
 else:
     data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
-    hits_pv =  [calculate_time(data)]
+    hits_pv =  [calculate_rate(data)]
     print(hits_pv)
     #%%
     for j in losses:
