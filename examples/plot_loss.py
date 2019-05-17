@@ -21,6 +21,51 @@ tslice = [0, Inf]
 width = 1
 
 #%%
+def filter_data(data):
+    if is_string_dtype(data[0]):
+        data.drop(data[data[0].str.contains('LOAD')].index, inplace=True)
+        data[0]=data[0].str.replace('VOLTAGE ', '')
+        data[0]=pd.to_numeric(data[0],errors='coerce')
+        data.reset_index(drop=True, inplace=True)
+    return data
+    
+
+#%%
+def calculate_rate(data, slice_range: list = [0, Inf]):
+        data = filter_data(data)
+        data[0]=data[0]-data.loc[0,0]
+        # sample every 1s
+        # data[0]=data[0].apply(ceil)
+        # data.drop_duplicates(subset=[0,1], inplace=True, keep='last')
+        
+        data.drop(data[data[0]>287].index, inplace=True)
+        data.drop(data[data[0]==0].index, inplace=True)
+        data.reset_index(drop=True, inplace=True)
+        if slice_range != [0, Inf]:
+            data.drop(data[data[0]<tslice[0]].index, inplace=True)
+            data.reset_index(drop=True, inplace=True)
+            data.drop(data[data[0]>tslice[1]].index, inplace=True)
+            data.reset_index(drop=True, inplace=True)
+        return data[data[2]>=max_vm][2].count()/data[2].count()
+
+#%%
+def calculate_time(data, slice_range: list = [0, Inf]):
+        data = filter_data(data)
+        data.loc[data[data[2]<1.05].index, 2] = 0
+        data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
+        data = data[data>0]
+        return data
+        # return data
+
+def calculate_timediff(data, slice_range: list = [0, Inf]):
+        data = filter_data(data)
+        data.loc[data[data[2]<1.05].index, 2] = 0
+        data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
+        data = data[data>0]
+        return data.mean()
+        # return data
+
+#%%
 parser = argparse.ArgumentParser(
     description='Plotting ECDF')
 parser.add_argument('--slice', type=str,
@@ -47,7 +92,7 @@ parser.add_argument('--width', type=float,
                     default=1)
 parser.add_argument('--save', type=str, default='')
 parser.add_argument('--load', type=str, default='')
-parser.add_argument('--figsize', nargs=2, type=int, default=[200, 100])
+parser.add_argument('--figsize', nargs=2, type=int, default=[24, 12])
 
 #%%
 args = parser.parse_args()
@@ -77,41 +122,6 @@ assert len(tslice) == 2
 width=args.width
 
 #%%
-def calculate_rate(data, slice_range: list = [0, Inf]):
-        if is_string_dtype(data[0]):
-            data.drop(data[data[0].str.contains('LOAD')].index, inplace=True)
-            data[0]=data[0].str.replace('VOLTAGE ', '')
-            data[0]=pd.to_numeric(data[0],errors='coerce')
-            data.reset_index(drop=True, inplace=True)
-        data[0]=data[0]-data.loc[0,0]
-        # sample every 1s
-        # data[0]=data[0].apply(ceil)
-        # data.drop_duplicates(subset=[0,1], inplace=True, keep='last')
-        
-        data.drop(data[data[0]>287].index, inplace=True)
-        data.drop(data[data[0]==0].index, inplace=True)
-        data.reset_index(drop=True, inplace=True)
-        if slice_range != [0, Inf]:
-            data.drop(data[data[0]<tslice[0]].index, inplace=True)
-            data.reset_index(drop=True, inplace=True)
-            data.drop(data[data[0]>tslice[1]].index, inplace=True)
-            data.reset_index(drop=True, inplace=True)
-        return data[data[2]>=max_vm][2].count()/data[2].count()
-
-def calculate_time(data, slice_range: list = [0, Inf]):
-        if is_string_dtype(data[0]):
-            data.drop(data[data[0].str.contains('LOAD')].index, inplace=True)
-            data[0]=data[0].str.replace('VOLTAGE ', '')
-            data[0]=pd.to_numeric(data[0],errors='coerce')
-            data.reset_index(drop=True, inplace=True)
-        data = data.groupby(1)
-        data = data.apply(lambda g: pd.DataFrame({0: g[0].shift(1)-g[0], 2:g[2]}))
-        data = data.apply(lambda g: g.drop(g[g[2]<1.05].index))
-        data[0] = data[0].diff()
-        data = data[data[2]>=max_vm]
-        data = data[0].sum()
-        return data
-
 
 #%%
 hits_opf: dict = {}
@@ -122,7 +132,7 @@ if load != '':
         hits_opf, hits_pi, hits_pv = pickle.load(pickle_file)
 else:
     data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
-    hits_pv =  [calculate_rate(data)]
+    hits_pv =  [calculate_time(data)]
     print(hits_pv)
     #%%
     for j in losses:
@@ -132,14 +142,16 @@ else:
         for i in runs:
             if with_opf:
                 try:
+                    print('reading sim.opf.{}loss.{}.log'.format(j,i))
                     data = pd.read_csv(os.path.join(results, 'sim.opf.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                    hits_opf[j] = hits_opf[j] + [calculate_rate(data)]
+                    hits_opf[j] = hits_opf[j] + [calculate_time(data)]
                 except Exception as e:
                     print("ERROR:", e)
             if with_pi:
                 try:
+                    print('reading sim.pi.{}loss.{}.log'.format(j,i))
                     data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                    hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
+                    hits_pi[j] = hits_pi[j] + [calculate_time(data)]
                 except Exception as e:
                     print(e)
 
