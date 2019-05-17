@@ -23,7 +23,8 @@ class NetworkLoad(Agent):
         self.curr_measure: float = 0
         # callback to call when reporting allocation, to get current electrical measures.
         self.update_measure_cb: Callable = None
-        self.update_measure_period = 2
+        self.update_measure_period = 1
+        self.report_measure_period = 1
         # callback to call when node received join_ack
         self.joined_callback: Callable = None
         # callback to generate allocation values for this NetworkLoad
@@ -42,6 +43,7 @@ class NetworkLoad(Agent):
         try:
             self.get_allocation_event = self.schedule(self.get_allocation, delay=self.generate_allocations_period)
             self.update_measure_event = self.schedule(self.update_measure, delay=self.update_measure_period)
+            self.report_measure_event = self.schedule(self.report_measure, delay=self.report_measure_period)
         except Exception as e:
             self.logger.warning("network load run: ".format(e))
 
@@ -134,7 +136,6 @@ class NetworkLoad(Agent):
             if measure is not None:
                 self.curr_measure = measure
                 self.logger.info("New measure is {}v".format(measure))
-        self.report_measure()
         self.update_measure_event = self.schedule(action=self.update_measure, delay=self.update_measure_period)
 
     def report_measure(self):
@@ -144,6 +145,7 @@ class NetworkLoad(Agent):
             self.send(packet, self.remote)
         else:
             self.logger.info("Not reporting, remote not defined yet")
+        self.report_measure_event = self.schedule(action=self.report_measure, delay=self.report_measure_period)
 
     def send_join(self, dst):
         """ Send a join request to the allocator
@@ -193,4 +195,5 @@ class NetworkLoad(Agent):
         self.interrupt_event(self.join_ack_timer)
         self.interrupt_event(self.update_measure_event)
         self.interrupt_event(self.next_allocation)
+        self.interrupt_event(self.update_measure_event)
         super(NetworkLoad, self).stop()
