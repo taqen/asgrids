@@ -34,20 +34,9 @@ def filter_data(data):
 #%%
 def calculate_rate(data, slice_range: list = [0, Inf]):
         data = filter_data(data)
-        # data[0]=data[0]-data.loc[0,0]
-        # sample every 1s
-        # data[0]=data[0].apply(ceil)
-        # data.drop_duplicates(subset=[0,1], inplace=True, keep='last')
-        
-        # data = data.drop(data[data[0]>287].index)
-        # data = data.drop(data[data[0]==0].index)
         data = data.reset_index(drop=True)
-        if slice_range != [0, Inf]:
-            data = data.drop(data[data[0]<tslice[0]].index)
-            data = data.reset_index(drop=True)
-            data = data.drop(data[data[0]>tslice[1]].index)
-            data = data.reset_index(drop=True)
-        return data[data[2]>=max_vm][2].count()/data[2].count()
+        data = data[data[2]>=max_vm][2].count()/data[2].count()
+        return data
 
 #%%
 def calculate_time(data, slice_range: list = [0, Inf]):
@@ -136,26 +125,40 @@ if load != '':
         hits_opf, hits_pi, hits_pv = pickle.load(pickle_file)
 else:
     data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
-    hits_pv =  [calculate_time(data)]
+    hits_pv =  [calculate_rate(data)]
     print(hits_pv)
     #%%
     for j in losses:
         hits_opf[j] = []
         hits_pi[j] = []
+        loss = ''
+        if j == 0:
+            loss = '127.0.6.1'
+        elif j == 10:
+            loss = '127.0.2.1'
+        elif j == 20:
+            loss = '127.0.3.1'
+        elif j == 30:
+            loss = '127.0.4.1'
+        elif j == 60:
+            loss = '127.0.5.1'
+        else:
+            raise ValueError(loss)
+
 
         for i in runs:
             if with_opf:
                 try:
-                    print('reading sim.opf.{}loss.{}.log'.format(j,i))
-                    data = pd.read_csv(os.path.join(results, 'sim.opf.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                    hits_opf[j] = hits_opf[j] + [calculate_time(data)]
+                    # print('reading sim.opf.{}loss.{}.log'.format(j,i))
+                    data = pd.read_csv(os.path.join(results, 'sim_{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
+                    hits_opf[j] = hits_opf[j] + [calculate_rate(data)]
                 except Exception as e:
                     print("ERROR:", e)
             if with_pi:
                 try:
                     print('reading sim.pi.{}loss.{}.log'.format(j,i))
                     data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                    hits_pi[j] = hits_pi[j] + [calculate_time(data)]
+                    hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
                 except Exception as e:
                     print(e)
 
@@ -213,7 +216,7 @@ if plot_type == 'boxplot':
 
 else:
     ax = fig.add_subplot(111)
-    x = [0, 5, 10, 15, 20]
+    x = [0, 2, 4, 6, 8]
     x = x[0:len(hits_opf)]
     pv_plot = ax.plot(x, [hits_pv for i in x], color='red')
     if with_opf:
@@ -243,16 +246,18 @@ else:
         legend_labels = ["OPF Control"] + legend_labels
     if with_pi:
         legend_labels = ["PI Control"] + legend_labels
-    # ax.set_xticks(x)
-    # ax.set_xticklabels(losses)
+    ax.set_xticks(x)
+    ax.set_xticklabels(losses)
     # ax.set_ylim(0, 0.08)
     # yticks = [i for i in arange(0, max(hits_pv)+0.02, 0.01)]
     # yticks = ax.get_yticks()
     # ax.set_yticklabels(["%0.1f%%"%(j*100) for j in yticks])
-    ax.legend(legend_items, legend_labels, loc="lower left")
+    ax.legend(legend_items, legend_labels, loc="best")
     ax.set_ylabel("Voltage violations (%)", fontsize=12)
     ax.set_xlabel("Packet loss (%)", fontsize=12)
-# plt.tight_layout()
-plt.savefig(output, figsize=figsize)
+    ax.xaxis.set_tick_params(labelsize=12)
+    ax.yaxis.set_tick_params(labelsize=12)
+plt.tight_layout()
+plt.savefig(output, figsize=figsize, dpi=600)
 #%%
-plt.show()
+# plt.show()

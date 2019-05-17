@@ -64,24 +64,20 @@ def filter_data_power(data):
         data[0]=pd.to_numeric(data[0],errors='coerce')
         data = data.reset_index(drop=True)
     data[0]=data[0]-data.loc[0,0]
+    data = data.drop(data[data[0]>200].index)
     return data
 
-def get_voltages(data, slice: list = [0, Inf]):
-    assert len(slice) <=2
+def get_power_loss(data):
     data = filter_data_power(data)
-    data.drop(data[data[0]>287].index, inplace=True)
-    data.drop(data[data[0]==0].index, inplace=True)
-    data.reset_index(drop=True, inplace=True)
-    # slicing
     total = 0
     data = data.groupby(1)
     for name, g in data:
         value = sum(g[2])
         if value <=0:
-            print("{}: {}".format(name, sum(g[2])))
             total = total + sum(g[2])
-    # print(data)
-    return 1-abs(total)/data_pv
+    data = 1-abs(total)/data_pv
+    print(data)
+    return [data]
 
 if load != '':
     with open(load, 'rb') as pickle_file:
@@ -89,18 +85,32 @@ if load != '':
 
 else:
     for j in losses:
+        loss = ''
+        if j == 0:
+            loss = '127.0.6.1'
+        elif j == 10:
+            loss = '127.0.2.1'
+        elif j == 20:
+            loss = '127.0.3.1'
+        elif j == 30:
+            loss = '127.0.4.1'
+        elif j == 60:
+            loss = '127.0.5.1'
+        else:
+            raise ValueError(loss)
+
         data_opf[j] = []
         data_pi[j] = []
         for i in runs:
             try:
                 if with_opf:
                     print("reading for opf {}% loss: {}".format(j, i))
-                    data = pd.read_csv(os.path.join(results, 'sim.opf.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                    data_opf[j] = data_opf[j] + get_voltages(data)
+                    data = pd.read_csv(os.path.join(results, 'sim_{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
+                    data_opf[j] = data_opf[j] + get_power_loss(data)
                 if with_pi:
                     print("reading for pi {}% loss: {}".format(j, i))
                     data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
-                    data_pi[j] = data_opf[j] + get_voltages(data)
+                    data_pi[j] = data_opf[j] + get_power_loss(data)
             except Exception as e:
                 print(e)
 if save != '':
@@ -127,7 +137,8 @@ for j in losses:
         # y = ecdf_opf(x)
         x = [i-0.5]
         y = [abs(np.mean(data_opf[j]))]
-        stdy = [abs(np.std(data_pi[j]))]
+        stdy = [abs(np.std(data_opf[j]))]
+        print(data_opf[j])
         print(x, y)
         ax.bar(x, y, yerr=stdy, color='blue', width=1, label="%d%% loss"%j)
     if with_pi:
