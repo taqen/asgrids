@@ -101,7 +101,7 @@ class PIController(object):
         epsilon_error = max(epsilon_error_generator, epsilon_error_load)
 
         # Update the integral error
-        self._lambda_error = max(self._lambda_error + epsilon_error * self.duration, 0)
+        self._lambda_error = max(self._lambda_error + epsilon_error * self.duration*300, 0)
 
         # Compute mu (hte p_max scale factor)
         mu = np.clip(a=1 - self.sigma * epsilon_error - self.tau * self._lambda_error, a_min=0, a_max=1)

@@ -47,7 +47,7 @@ parser.add_argument('--optimize-cycle', type=int,
                     default=5)
 parser.add_argument('--pp-cycle', type=int,
                     help='CSV database with loads timeseries',
-                    default=1)
+                    default=0)
 parser.add_argument('--optimizer', type=str,
                     help='OPF or PI',
                     default='pi')
@@ -71,8 +71,11 @@ parser.add_argument('--max-vm', type=float,
 parser.add_argument('--accel', type=float,
                     help='maxium voltage that triggers optimization',
                     default=1.0)
-args = parser.parse_args()
+parser.add_argument('--p-factor', type=float,
+                    default=1.0)
 
+args = parser.parse_args()
+p_factor = args.p_factor
 accel=args.accel
 assert accel > 0
 max_vm = args.max_vm
@@ -90,6 +93,12 @@ simtime = args.sim_time
 output = args.output
 initial_port = args.initial_port
 address = args.address
+
+curves = pd.read_csv(CSV_FILE)
+curves.drop(curves[curves['timestamp']<=49].index, inplace=True)
+curves.drop(curves[curves['timestamp']>=249].index, inplace=True)
+curves.reset_index(drop=True, inplace=True)
+curves['timestamp'] = curves['timestamp'] - curves.iloc[0, 0]
 
 # logger_a will log all allocations and measurements received by the allocator
 # logger_b will log all allocations and measurements known by each node
@@ -126,8 +135,8 @@ terminate.clear()
 def shutdown(x, y):
     print("Shutdown")
     terminate.set()
-    allocations_queue.put([0, 0, 0, 0])
-    voltage_values.put([0,0])
+    # allocations_queue.put([0, 0, 0, 0])
+    # voltage_values.put([0,0])
     sim.stop()
 
 
@@ -146,10 +155,8 @@ port = gen_port(initial_port)
 
 
 def csv_generator(file, columns=None):
-    curves = pd.read_csv(file)
     if columns is None:
         columns = []
-
     # Data preparation
     filtered = curves.filter(items=['timestamp']+columns)
     filtered['duration'] = filtered['timestamp'].diff(periods=-1).abs()
@@ -167,16 +174,13 @@ def generate_allocations(node, old_allocation, now=0):
     p, q, d = [0, 0, 1*accel]
     if 'PV' in addr_to_name[node]:
         if with_pv:
-            t, p, q, d = next(allocation_generators[node])
+            while True:
+                t, p, q, d = next(allocation_generators[node])
+                if t*accel >= real_now:
+                    break
     else:
         t, p, q, d = next(allocation_generators[node])
-    # if not ('PV' in addr_to_name[node] and with_pv is False):
-    #     t, p, q, d = next(allocation_generators[node])
-        # while True:
-        #     t, p, q, d = next(allocation_generators[node])
-        #     if t*accel >= real_now:
-        #         break
-    allocation = Allocation(0, p, q, 1)
+    allocation = Allocation(0, p*p_factor, q, 1)
     return allocation
 
 
@@ -204,12 +208,13 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     except Exception as e:
         print("Error in allocation_updated: {}".format(e))
 
+# Collects allocator's received measures
 def allocator_measure_updated(allocation: list, node_addr: str):
     # we receive a list containing current PQ values and Voltage measure
-    v = allocation[1]
+    # v = allocation[1]
     # print("allocator updated v = {} for node {}".format(v, node_addr))
     try:
-        voltage_values.put_nowait([node_addr, v])
+        voltage_values.put_nowait([node_addr, allocation])
     except Full:
         print("voltage_values is full")
     # if logger_a is not None:
@@ -222,6 +227,7 @@ def create_nodes(net, remote):
     for i in range(len(net.load.index)):
         node = sim.create_node('load', '{}:{}'.format(address, next(port)))
         node.update_measure_period = 1
+        node.report_measure_period = 1
         node.run()
         measure_queues[node.local] = Queue(maxsize=1)
         node.update_measure_cb = allocation_updated
@@ -233,6 +239,7 @@ def create_nodes(net, remote):
             net.load['max_p_kw'][i] = 0
             net.load['min_q_kvar'][i] = 0
             net.load['max_q_kvar'][i] = 0
+            pp.create_polynomial_cost(net, i, 'load', np.array([1, 0]))
 
         net.load['name'][i] = "{}".format(node.local)
         nodes.append(node)
@@ -294,11 +301,11 @@ def worker_pp(fn, args: list, cycle: float):
 def worker_optimize(fn, args: list, cycle: float):
     import sys, traceback
     while not terminate.is_set():
+        lock.acquire()
+        netcopy = deepcopy(net)
+        lock.release()
+        ARGS = [netcopy] + args
         try:
-            lock.acquire()
-            netcopy = deepcopy(net)
-            lock.release()
-            ARGS = [netcopy] + args
             fn(*ARGS)
         except Exception as e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -322,7 +329,7 @@ with Executor(max_workers=200) as executor:
                 executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
             elif optimizer == 'opf':
                 print("Optimizing network in realtime with OPF")
-                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm, False], optimize_cycle*accel)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
 

@@ -20,7 +20,7 @@ class NetworkLoad(Agent):
         self.identity: str = self.nid
         self.type: str = "NetworkLoad"
         # storage for current electrical measures
-        self.curr_measure: float = 0
+        self.curr_measure: float = 0 #float("inf")
         # callback to call when reporting allocation, to get current electrical measures.
         self.update_measure_cb: Callable = None
         self.update_measure_period = 1
@@ -133,16 +133,19 @@ class NetworkLoad(Agent):
                 measure = self.update_measure_cb(self.curr_allocation, self.local, time())
             except Exception as e:
                 self.logger.warning("Couldn't update measure: {}".format(e))
-            if measure is not None:
+            if measure is not None:# and measure > self.curr_measure:
                 self.curr_measure = measure
                 self.logger.info("New measure is {}v".format(measure))
         self.update_measure_event = self.schedule(action=self.update_measure, delay=self.update_measure_period)
 
     def report_measure(self):
         if self.remote is not None:
+            # if self.curr_measure > 0:
             self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
+            # self.logger.warning("sending measure {}v".format(self.curr_measure))
             packet = Packet('curr_allocation', [self.curr_allocation, self.curr_measure], self.local)
             self.send(packet, self.remote)
+            # self.curr_measure = 0
         else:
             self.logger.info("Not reporting, remote not defined yet")
         self.report_measure_event = self.schedule(action=self.report_measure, delay=self.report_measure_period)

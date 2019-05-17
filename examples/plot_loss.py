@@ -27,30 +27,34 @@ def filter_data(data):
         data[0]=data[0].str.replace('VOLTAGE ', '')
         data[0]=pd.to_numeric(data[0],errors='coerce')
         data.reset_index(drop=True, inplace=True)
+    data[0]=data[0]-data.loc[0,0]
     return data
     
 
 #%%
 def calculate_rate(data, slice_range: list = [0, Inf]):
         data = filter_data(data)
-        data[0]=data[0]-data.loc[0,0]
+        # data[0]=data[0]-data.loc[0,0]
         # sample every 1s
         # data[0]=data[0].apply(ceil)
         # data.drop_duplicates(subset=[0,1], inplace=True, keep='last')
         
-        data.drop(data[data[0]>287].index, inplace=True)
-        data.drop(data[data[0]==0].index, inplace=True)
-        data.reset_index(drop=True, inplace=True)
+        # data = data.drop(data[data[0]>287].index)
+        # data = data.drop(data[data[0]==0].index)
+        data = data.reset_index(drop=True)
         if slice_range != [0, Inf]:
-            data.drop(data[data[0]<tslice[0]].index, inplace=True)
-            data.reset_index(drop=True, inplace=True)
-            data.drop(data[data[0]>tslice[1]].index, inplace=True)
-            data.reset_index(drop=True, inplace=True)
+            data = data.drop(data[data[0]<tslice[0]].index)
+            data = data.reset_index(drop=True)
+            data = data.drop(data[data[0]>tslice[1]].index)
+            data = data.reset_index(drop=True)
         return data[data[2]>=max_vm][2].count()/data[2].count()
 
 #%%
 def calculate_time(data, slice_range: list = [0, Inf]):
         data = filter_data(data)
+        # data[0]=data[0]-data.loc[0,0]
+        # data.drop(data[data[0]>287].index, inplace=True)
+        # data.drop(data[data[0]==0].index, inplace=True)
         data.loc[data[data[2]<1.05].index, 2] = 0
         data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
         data = data[data>0]

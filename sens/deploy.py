@@ -221,34 +221,43 @@ class SmartGridSimulation(object):
                 except Empty:
                     measure_queues[node].put(vm_pu)
 
-    def optimize_network_opf(self, net, allocator, voltage_values, duty_cycle=10, max_vm=1.01):
+    def optimize_network_opf(self, net, allocator, voltage_values, duty_cycle=10, max_vm=1.05, check_limit=True):
         qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
         optimize = False
+        print("checking voltage violations")
         for _ in range(qsize):
             try:
-                nid, v = voltage_values.get()
+                nid, allocation = voltage_values.get()
+                net.load[net.load['name'] == nid]['p_kw'] = allocation[0].p_value
             except Exception as e:
                 print("Error getting voltage value from queue: {}".format(e))
-            if nid == v == 0:
+            if nid == 0:
                 print("Terminating optimize_network_opf")
                 return
+            v = allocation[1]
             if v >= max_vm:# or v <= 0.96:
                 optimize = True
         
-        if not optimize:
+        if not optimize and check_limit:
             return
-        
+        try:
+            c_loads = net.load[net.load['controllable'] == True]
+        except Exception as e:
+            print("Error getting list of controllable loads: {}".format(e))        
         try:
             pp.runopp(net, verbose=False)
         except OPFNotConverged as e:
             print("Runopp failed: {}".format(e))
+            for row in c_loads.iterrows():
+                p = 0
+                q = 0
+                name = row[1]['name']
+                allocation = Allocation(0, p, q, duty_cycle*3)
+                print("OPF SENT ALLOCATION {} to {}".format(0 , name))
+                allocator.send_allocation(nid=name, allocation=allocation)
             return
         except Exception as e:
             print("What the fuck: {}: {}".format(type(e).__name__, e.args))
-        try:
-            c_loads = net.load[net.load['controllable'] == True]
-        except Exception as e:
-            print("Error getting list of controllable loads: {}".format(e))
 
         print("optimizing {} nodes".format(len(c_loads.index)))
         for row in c_loads.iterrows():
@@ -260,8 +269,9 @@ class SmartGridSimulation(object):
                 print("Error in opf, couldn't read p,q from net.res_load: {}".format(e))
                 raise(e)
             try:
-                allocation = Allocation(0, p, q, duty_cycle)
+                allocation = Allocation(0, p, q, duty_cycle*3)
                 allocator.send_allocation(nid=name, allocation=allocation)
+                print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
             except Exception as e:
                 print("Error scheduing allocation: {}".format(e))
                 print("Terminating OPF controller")
@@ -284,10 +294,11 @@ class SmartGridSimulation(object):
         optimize = False
         try:
             for _ in range(qsize):
-                nid, v = voltage_values.get()
-                if nid == v == 0:
+                nid, allocation = voltage_values.get()
+                if nid == 0:
                     print("Terminating optimize_network_pi")
                     return
+                v = allocation[1]
                 values[nid] = v
                 if v is not None and v >= max_vm:
                     optimize = True

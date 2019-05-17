@@ -57,34 +57,31 @@ data_opf: dict = {}
 data_pi: dict = {}
 data_pv = 35970.01922997645 #original data
 
+def filter_data_power(data):
+    if is_string_dtype(data[0]):
+        data = data.drop(data[data[0].str.contains('VOLTAGE')].index)
+        data[0]=data[0].str.replace('LOAD ', '')
+        data[0]=pd.to_numeric(data[0],errors='coerce')
+        data = data.reset_index(drop=True)
+    data[0]=data[0]-data.loc[0,0]
+    return data
 
 def get_voltages(data, slice: list = [0, Inf]):
     assert len(slice) <=2
-    if is_string_dtype(data[0]):
-        data.drop(data[data[0].str.contains('VOLTAGE')].index, inplace=True)
-        data[0]=data[0].str.replace('LOAD ', '')
-        data[0]=pd.to_numeric(data[0],errors='coerce')
-        data.reset_index(drop=True, inplace=True)
-    data[0]=data[0]-data.loc[0,0]
-    # data[0]=data[0].apply(ceil)
-    # data.drop_duplicates(subset=[0,1], inplace=True, keep='last')
-    # data.reset_index(drop=True, inplace=True)
-
+    data = filter_data_power(data)
     data.drop(data[data[0]>287].index, inplace=True)
     data.drop(data[data[0]==0].index, inplace=True)
     data.reset_index(drop=True, inplace=True)
     # slicing
-    data.drop(data[data[0]<tslice[0]].index, inplace=True)
-    data.reset_index(drop=True, inplace=True)
-    data.drop(data[data[0]>tslice[1]].index, inplace=True)
-    data.reset_index(drop=True, inplace=True)
-    
+    total = 0
     data = data.groupby(1)
-    # data = data.describe()[2][['mean', 'std']].iloc[15:, :]
-    # data = data['mean'].tolist()
-    data = data.apply(lambda g: trapz(g[2], x=g[0])).iloc[15:].sum()
+    for name, g in data:
+        value = sum(g[2])
+        if value <=0:
+            print("{}: {}".format(name, sum(g[2])))
+            total = total + sum(g[2])
     # print(data)
-    return [1-abs(data)/data_pv]
+    return 1-abs(total)/data_pv
 
 if load != '':
     with open(load, 'rb') as pickle_file:
