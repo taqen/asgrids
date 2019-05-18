@@ -228,7 +228,10 @@ class SmartGridSimulation(object):
         for _ in range(qsize):
             try:
                 nid, allocation = voltage_values.get()
-                net.load[net.load['name'] == nid]['p_kw'] = allocation[0].p_value
+                net.load.loc[net.load['name'] == nid, 'p_kw'] = allocation[0].p_value
+                if allocation[0].p_value <=0:
+                    net.load.loc[net.load['name'] == nid, 'min_p_kw'] = allocation[0].p_value
+                # print(net.load[net.load['name'] == nid]['min_p_kw'].item())
             except Exception as e:
                 print("Error getting voltage value from queue: {}".format(e))
             if nid == 0:
