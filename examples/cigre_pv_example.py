@@ -175,7 +175,10 @@ def generate_allocations(node, old_allocation, now=0):
     if 'PV' in addr_to_name[node]:
         if with_pv:
             while True:
-                t, p, q, d = next(allocation_generators[node])
+                try:
+                    t, p, q, d = next(allocation_generators[node])
+                except Exception as e:
+                    break
                 if t*accel >= real_now:
                     break
     else:
