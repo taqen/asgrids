@@ -14,7 +14,7 @@ import numpy as np
 import pandapower as pp
 import pandapower.networks as pn
 import pandas as pd
-from sens import Allocation, SmartGridSimulation, Packet
+from asgrids import Allocation, SmartGridSimulation, Packet
 
 
 parser = argparse.ArgumentParser(

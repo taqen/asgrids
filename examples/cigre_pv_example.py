@@ -1,7 +1,7 @@
 from queue import Queue, Full, Empty
 from threading import Event, Lock
 from time import monotonic as time, sleep
-from sens import SmartGridSimulation, Allocation, Packet#, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
+from asgrids import SmartGridSimulation, Allocation, Packet#, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp

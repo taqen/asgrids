@@ -12,9 +12,9 @@ from shutil import rmtree
 from setuptools import Command, find_packages, setup
 
 # Package meta-data.
-NAME = 'sens'
+NAME = 'asgrids'
 DESCRIPTION = 'Smart Electrical Networks Simulator'
-URL = 'https://github.com/takienn/sens'
+URL = 'https://github.com/takienn/asgrids'
 EMAIL = 'takai.ken@gmail.com'
 AUTHOR = 'Takai Eddine Kennouche'
 REQUIRES_PYTHON = '>=3.5.3'

@@ -11,7 +11,7 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import pandapower as pp
 
-from sens import Allocation, SmartGridSimulation
+from asgrids import Allocation, SmartGridSimulation
 
 # Define address of physical network nodes
 # In this case, the first address is the allocator's

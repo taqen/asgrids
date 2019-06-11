@@ -53,17 +53,17 @@ class SmartGridSimulation(object):
         self.shutdown = False
 
     """
-    Make sure 'sens' library is available remotely
+    Make sure 'asgrids' library is available remotely
     """
 
     @staticmethod
     def check_remote(remote_server, python_pkg_path="/home/ubuntu/.local/lib/python3.6/site-packages/"):
         conn = remote_server.classic_connect()
         import os
-        import sens
+        import asgrids
 
         rpyc.classic.upload_package(
-            conn, sens, os.path.join(python_pkg_path, "sens"))
+            conn, asgrids, os.path.join(python_pkg_path, "asgrids"))
         return False
 
     """
@@ -78,7 +78,7 @@ class SmartGridSimulation(object):
         remote_machine = SshMachine(
             host=hostname, user=username, keyfile=keyfile)
         remote_server = DeployedServer(remote_machine)
-        # if `sens` wasn't available remotely, now we installed it
+        # if `asgrids` wasn't available remotely, now we installed it
         # but we need to reconnect to get an updated conn.modules
         # TODO Might not be needed if using execute/eval
         if not self.check_remote(remote_server):
@@ -96,12 +96,12 @@ class SmartGridSimulation(object):
         # useful when teleporting functions that need using remote object names
         # as using conn.modules create a locate but not a remote namespace member
         if ntype is 'load':
-            conn.execute("from sens import NetworkLoad")
+            conn.execute("from asgrids import NetworkLoad")
             conn.execute("node=NetworkLoad()")
             conn.execute("node.local={}".format(addr))
             node = conn.namespace['node']
         elif ntype is 'allocator':
-            conn.execute("from sens import NetworkAllocator")
+            conn.execute("from asgrids import NetworkAllocator")
             conn.execute("node=NetworkAllocator()")
             node = conn.namespace['node']
         else:

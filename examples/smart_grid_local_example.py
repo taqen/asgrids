@@ -3,7 +3,7 @@
 
 import signal
 
-from sens import Allocation, SmartGridSimulation
+from asgrids import Allocation, SmartGridSimulation
 
 
 # Used locally to load and prepare data
