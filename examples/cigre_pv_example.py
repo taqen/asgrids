@@ -182,7 +182,10 @@ def generate_allocations(node, old_allocation, now=0):
                 if t*accel >= real_now:
                     break
     else:
-        t, p, q, d = next(allocation_generators[node])
+        try:
+            t, p, q, d = next(allocation_generators[node])
+        except Exception as e:
+            pass
     allocation = Allocation(0, p*p_factor, q, 1)
     return allocation
 
