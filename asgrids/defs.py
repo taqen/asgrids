@@ -24,11 +24,11 @@ packet_types = [
 
 class Allocation(namedtuple('Allocation', ['aid', 'p_value', 'q_value', 'duration'])):
     __slots__: list = []
-    def __eq__(s, o): return (s.p_value, s.q_value, s.duration) == (o.p_value, o.q_value, q.duration)
-    def __lt__(s, o): return (s.p_value, s.q_value, s.duration) < (o.p_value, o.q_value, q.duration)
-    def __le__(s, o): return (s.p_value, s.q_value, s.duration) <= (o.p_value, o.q_value, q.duration)
-    def __gt__(s, o): return (s.p_value, s.q_value, s.duration) > (o.p_value, o.q_value, q.duration)
-    def __ge__(s, o): return (s.p_value, s.q_value, s.duration) >= (o.p_value, o.q_value, q.duration)
+    def __eq__(s, o): return (s.p_value, s.q_value, s.duration) == (o.p_value, o.q_value, o.duration)
+    def __lt__(s, o): return (s.p_value, s.q_value, s.duration) < (o.p_value, o.q_value, o.duration)
+    def __le__(s, o): return (s.p_value, s.q_value, s.duration) <= (o.p_value, o.q_value, o.duration)
+    def __gt__(s, o): return (s.p_value, s.q_value, s.duration) > (o.p_value, o.q_value, o.duration)
+    def __ge__(s, o): return (s.p_value, s.q_value, s.duration) >= (o.p_value, o.q_value, o.duration)
 
     def __new__(cls, aid=0, p_value=0, q_value=0, duration=0):
         return super(Allocation, cls).__new__(cls, aid, p_value, q_value, duration)
