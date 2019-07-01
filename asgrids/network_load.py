@@ -37,6 +37,7 @@ class NetworkLoad(Agent):
         self.get_allocation_event = None
         self.update_measure_event = None
         self.max_allocation = Allocation(p_value=float("inf"), q_value=float("inf"))
+        self.max_allocation = Allocation(p_value=float("inf"), q_value=float("inf"))
 
     def run(self):
         super(NetworkLoad, self).run()
@@ -102,23 +103,21 @@ class NetworkLoad(Agent):
         """
         # Allocation is interpreted as a quota to be enforced
         self.logger.debug("{} - Current allocation value is {}".format(self.local, self.curr_allocation))
-        if abs(allocation.p_value) <= abs(self.max_allocation.p_value):
-            self.curr_allocation = allocation
-            if self.next_allocation is not None:
-                self.interrupt_event(self.next_allocation)
-                self.next_allocation = self.schedule(self.get_allocation, delay=self.curr_allocation.duration)
-            self.logger.info("{} - New allocation value is {}".format(self.local, self.curr_allocation))
-        else:
-            self.logger.info("Can't execute allocation: {}. Beyond node's ability {}".format(allocation, self.max_allocation))
+        # if abs(allocation.p_value) <= abs(self.max_allocation.p_value):
+        self.curr_allocation = allocation
+        # self.logger.info("{} - New allocation value is {}".format(self.local, self.curr_allocation))
+        # else:
+        #     self.logger.info("Can't execute allocation: {}. Beyond node's ability {}".format(allocation, self.max_allocation))
 
     def get_allocation(self):
-        """ Tries to query and allocations source for a new allocation to execute
+        """ Tries to query an allocations source for a new allocation
         The new allocation will also be saved as limit for eventual orders received from an allocator
         """
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
             self.max_allocation = self.generate_allocations(self.local, self.curr_allocation, self.env.now)
-            self.schedule(self.handle_allocation, args={'allocation': self.max_allocation})
+            # self.handle_allocation(self.max_allocation)
+            # self.schedule(self.handle_allocation, args={'allocation': self.max_allocation})
         else:
             self.logger.info("No source defined to generate allocations")
 
@@ -130,7 +129,8 @@ class NetworkLoad(Agent):
     def update_measure(self):
         if self.update_measure_cb is not None:
             try:
-                measure = self.update_measure_cb(self.curr_allocation, self.local, time())
+                allocation = min(self.curr_allocation, self.max_allocation) if self.curr_allocation.p_value >=0 else max(self.curr_allocation, self.max_allocation)
+                measure = self.update_measure_cb(allocation, self.local, time())
             except Exception as e:
                 self.logger.warning("Couldn't update measure: {}".format(e))
             if measure is not None:# and measure > self.curr_measure:
@@ -141,9 +141,10 @@ class NetworkLoad(Agent):
     def report_measure(self):
         if self.remote is not None:
             # if self.curr_measure > 0:
-            self.logger.info("Reporting allocation {} to {}".format(self.curr_allocation, self.remote))
+            allocation = min(self.curr_allocation, self.max_allocation) if self.curr_allocation.p_value >=0 else max(self.curr_allocation, self.max_allocation)
+            self.logger.info("Reporting allocation {} to {}".format(allocation, self.remote))
             # self.logger.warning("sending measure {}v".format(self.curr_measure))
-            packet = Packet('curr_allocation', [self.curr_allocation, self.curr_measure], self.local)
+            packet = Packet('curr_allocation', [allocation, self.max_allocation, self.curr_measure], self.local)
             self.send(packet, self.remote)
             # self.curr_measure = 0
         else:

@@ -230,14 +230,14 @@ class SmartGridSimulation(object):
                 nid, allocation = voltage_values.get()
                 net.load.loc[net.load['name'] == nid, 'p_kw'] = allocation[0].p_value
                 if allocation[0].p_value <=0:
-                    net.load.loc[net.load['name'] == nid, 'min_p_kw'] = allocation[0].p_value
+                    net.load.loc[net.load['name'] == nid, 'min_p_kw'] = allocation[1].p_value
                 # print(net.load[net.load['name'] == nid]['min_p_kw'].item())
             except Exception as e:
                 print("Error getting voltage value from queue: {}".format(e))
             if nid == 0:
                 print("Terminating optimize_network_opf")
                 return
-            v = allocation[1]
+            v = allocation[2]
             if v >= max_vm:# or v <= 0.96:
                 optimize = True
         
@@ -251,12 +251,14 @@ class SmartGridSimulation(object):
             pp.runopp(net, verbose=False)
         except OPFNotConverged as e:
             print("Runopp failed: {}".format(e))
+            print(net.load['p_kw'])
+
             for row in c_loads.iterrows():
                 p = 0
                 q = 0
                 name = row[1]['name']
                 allocation = Allocation(0, p, q, duty_cycle*3)
-                print("OPF SENT ALLOCATION {} to {}".format(0 , name))
+                # print("OPF SENT ALLOCATION {} to {}".format(0 , name))
                 allocator.send_allocation(nid=name, allocation=allocation)
             return
         except Exception as e:
@@ -273,8 +275,9 @@ class SmartGridSimulation(object):
                 raise(e)
             try:
                 allocation = Allocation(0, p, q, duty_cycle*3)
+                print(name, ": ", allocation)
                 allocator.send_allocation(nid=name, allocation=allocation)
-                print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
+                # print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
             except Exception as e:
                 print("Error scheduing allocation: {}".format(e))
                 print("Terminating OPF controller")
@@ -301,7 +304,7 @@ class SmartGridSimulation(object):
                 if nid == 0:
                     print("Terminating optimize_network_pi")
                     return
-                v = allocation[1]
+                v = allocation[2]
                 values[nid] = v
                 if v is not None and v >= max_vm:
                     optimize = True
