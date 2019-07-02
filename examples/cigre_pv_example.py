@@ -95,10 +95,10 @@ initial_port = args.initial_port
 address = args.address
 
 curves = pd.read_csv(CSV_FILE)
-curves.drop(curves[curves['timestamp']<=49].index, inplace=True)
-curves.drop(curves[curves['timestamp']>=249].index, inplace=True)
-curves.reset_index(drop=True, inplace=True)
-curves['timestamp'] = curves['timestamp'] - curves.iloc[0, 0]
+# curves.drop(curves[curves['timestamp']<=49].index, inplace=True)
+# curves.drop(curves[curves['timestamp']>=249].index, inplace=True)
+# curves.reset_index(drop=True, inplace=True)
+# curves['timestamp'] = curves['timestamp'] - curves.iloc[0, 0]
 
 # logger_a will log all allocations and measurements received by the allocator
 # logger_b will log all allocations and measurements known by each node
@@ -160,7 +160,7 @@ def csv_generator(file, columns=None):
     # Data preparation
     filtered = curves.filter(items=['timestamp']+columns)
     filtered['duration'] = filtered['timestamp'].diff(periods=-1).abs()
-    return iter(filtered.values.tolist())
+    return filtered
 
 
 def generate_allocations(node, old_allocation, now=0):
@@ -174,16 +174,16 @@ def generate_allocations(node, old_allocation, now=0):
     p, q, d = [0, 0, 1*accel]
     if 'PV' in addr_to_name[node]:
         if with_pv:
-            while True:
-                try:
-                    t, p, q, d = next(allocation_generators[node])
-                except Exception as e:
-                    break
-                if t*accel >= real_now:
-                    break
+            try:
+                agen = allocation_generators[node]
+                agen = agen.iloc[int(now)]
+                t, p, q, d = agen
+            except Exception as e:
+                print(e)
+                pass
     else:
         try:
-            t, p, q, d = next(allocation_generators[node])
+            t, p, q, d = allocation_generators[node][allocation_generators[node][0]>=real_now][0]
         except Exception as e:
             pass
     allocation = Allocation(0, p*p_factor, q, 1)
