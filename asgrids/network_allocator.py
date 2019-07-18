@@ -8,8 +8,8 @@ from itertools import count
 
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
-    def __init__(self, local=None, env=None):
-        super(NetworkAllocator, self).__init__(env=env)
+    def __init__(self, local=None):
+        super(NetworkAllocator, self).__init__()
         self.nid = local
         self.nodes = {}
         self.alloc_ack_timeout = 3

@@ -10,14 +10,13 @@ from .defs import Allocation, Packet
 
 
 class NetworkLoad(Agent):
-    def __init__(self, local=None, remote=None, env=None):
-        super(NetworkLoad, self).__init__(env=env)
+    def __init__(self, local=None, remote=None):
+        super(NetworkLoad, self).__init__()
         self.remote = remote
         self.nid = self.local
         self.curr_allocation: Allocation = Allocation()
         self.local: str = local
         self.callback: Callable = self.handle_receive
-        self.identity: str = self.nid
         self.type: str = "NetworkLoad"
         # storage for current electrical measures
         self.curr_measure: float = 0 #float("inf")
@@ -42,11 +41,11 @@ class NetworkLoad(Agent):
     def run(self):
         super(NetworkLoad, self).run()
         try:
-            self.get_allocation_event = self.schedule(self.get_allocation, delay=self.generate_allocations_period)
-            self.update_measure_event = self.schedule(self.update_measure, delay=self.update_measure_period)
-            self.report_measure_event = self.schedule(self.report_measure, delay=self.report_measure_period)
+            self.get_allocation_event = self.schedule(action=self.get_allocation, delay=self.generate_allocations_period)
+            self.update_measure_event = self.schedule(action=self.update_measure, delay=self.update_measure_period)
+            self.report_measure_event = self.schedule(action=self.report_measure, delay=self.report_measure_period)
         except Exception as e:
-            self.logger.warning("network load run: ".format(e))
+            self.logger.warning("network load run: {}".format(e))
 
 
     def handle_receive(self, p, src=None):
@@ -115,7 +114,7 @@ class NetworkLoad(Agent):
         """
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
-            self.max_allocation = self.generate_allocations(self.local, self.curr_allocation, self.env.now)
+            self.max_allocation = self.generate_allocations(self.local, self.curr_allocation, self.loop.time())
             # self.handle_allocation(self.max_allocation)
             # self.schedule(self.handle_allocation, args={'allocation': self.max_allocation})
         else:
