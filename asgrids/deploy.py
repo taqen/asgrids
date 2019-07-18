@@ -221,7 +221,7 @@ class SmartGridSimulation(object):
                 except Empty:
                     measure_queues[node].put(vm_pu)
 
-    def optimize_network_opf(self, net, allocator, voltage_values, duty_cycle=10, max_vm=1.05, check_limit=True):
+    def optimize_network_opf(self, net, allocator, voltage_values, duty_cycle=10, max_vm=1.05, forecast=True, check_limit=True):
         qsize = voltage_values.qsize()  # Getting all measurements from the queue at once
         optimize = False
         print("checking voltage violations")
@@ -229,8 +229,9 @@ class SmartGridSimulation(object):
             try:
                 nid, allocation = voltage_values.get()
                 net.load.loc[net.load['name'] == nid, 'p_kw'] = allocation[0].p_value
-                if allocation[0].p_value <=0:
-                    net.load.loc[net.load['name'] == nid, 'min_p_kw'] = allocation[1].p_value
+                if forecast:
+                    if allocation[0].p_value <=0:
+                        net.load.loc[net.load['name'] == nid, 'min_p_kw'] = allocation[1].p_value
                 # print(net.load[net.load['name'] == nid]['min_p_kw'].item())
             except Exception as e:
                 print("Error getting voltage value from queue: {}".format(e))
@@ -276,7 +277,8 @@ class SmartGridSimulation(object):
             try:
                 allocation = Allocation(0, p, q, duty_cycle*3)
                 print(name, ": ", allocation)
-                allocator.send_allocation(nid=name, allocation=allocation)
+                allocator.schedule(action=allocator.send_allocation, args=[name, allocation])
+                # allocator.send_allocation(nid=name, allocation=allocation)
                 # print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
             except Exception as e:
                 print("Error scheduing allocation: {}".format(e))
