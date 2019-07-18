@@ -34,10 +34,10 @@ class AsyncUdpProtocol:
         self.loop.create_task(self.handle_income_packet(data, addr))
 
     def error_received(self, exc):
-        print('Error received:', exc)
-
+        # print('Error received:', exc)
+        pass
     def connection_lost(self, exc):
-        print("Connection closed")
+        # print("Connection closed")
         self.on_con_lost.set_result(True)
 
 
@@ -48,10 +48,10 @@ class AsyncUdp(threading.Thread):
         self._local_address = local_address
         self._loop = None
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix='executor')
-        name = 'AsyncUdpThread'
         self.protocol = None
         self.transport = None
         self.event = None
+        name = 'AsyncUdpThread'
         threading.Thread.__init__(self, name=name)
 
     async def udp_loop(self):
@@ -68,17 +68,17 @@ class AsyncUdp(threading.Thread):
             logger.warning(e)
 
         await self.event.wait()
-        logger.warning("Closing udp loop")
+        logger.debug("Closing udp loop")
         try:
             self.transport.abort()
             self.transport.close()
         except Exception as e:
             logger.warning(e)
-        logger.warning("Closed udp loop")
+        logger.debug("Closed udp loop")
 
     def run(self):
         asyncio.run(self.udp_loop())
-        logger.warning("Closing asyncio")
+        logger.debug("Closing asyncio")
 
     def send(self, request, remote):
         p = msgpack.packb(request, default=ext_pack, strict_types=True, encoding='utf-8')
@@ -97,7 +97,7 @@ class AsyncUdp(threading.Thread):
         await self._loop.run_in_executor(self._executor, self._callback, p)
 
     def stop(self):
-        logger.warning("Stopping AsyncUdpThread")
+        logger.debug("Stopping AsyncUdpThread")
         # self._poller.unregister(self._client)
         try:
             self._loop.call_soon_threadsafe(self.event.set)
