@@ -73,8 +73,11 @@ parser.add_argument('--accel', type=float,
                     default=1.0)
 parser.add_argument('--p-factor', type=float,
                     default=1.0)
-
+parser.add_argument('--no-forecast', action='store_true')
+parser.add_argument('--check-limit', action='store_true')
 args = parser.parse_args()
+opf_forecast = not args.no_forecast
+opf_check = args.check_limit
 p_factor = args.p_factor
 accel=args.accel
 assert accel > 0
@@ -95,10 +98,10 @@ initial_port = args.initial_port
 address = args.address
 
 curves = pd.read_csv(CSV_FILE)
-# curves.drop(curves[curves['timestamp']<=49].index, inplace=True)
-# curves.drop(curves[curves['timestamp']>=249].index, inplace=True)
-# curves.reset_index(drop=True, inplace=True)
-# curves['timestamp'] = curves['timestamp'] - curves.iloc[0, 0]
+curves.drop(curves[curves['timestamp']<=49].index, inplace=True)
+curves.drop(curves[curves['timestamp']>=249].index, inplace=True)
+curves.reset_index(drop=True, inplace=True)
+curves['timestamp'] = curves['timestamp'] - curves.iloc[0, 0]
 
 # logger_a will log all allocations and measurements received by the allocator
 # logger_b will log all allocations and measurements known by each node
@@ -176,10 +179,11 @@ def generate_allocations(node, old_allocation, now=0):
         if with_pv:
             try:
                 agen = allocation_generators[node]
-                agen = agen.iloc[int(now)]
+                agen = agen.iloc[int(real_now)]
                 t, p, q, d = agen
             except Exception as e:
                 print(e)
+                shutdown(0,0)
                 pass
     else:
         try:
@@ -335,7 +339,7 @@ with Executor(max_workers=200) as executor:
                 executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
             elif optimizer == 'opf':
                 print("Optimizing network in realtime with OPF")
-                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm, False], optimize_cycle*accel)
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm, opf_forecast, opf_check], optimize_cycle*accel)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
 
