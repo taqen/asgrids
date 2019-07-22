@@ -57,11 +57,12 @@ class SmartGridSimulation(object):
     """
 
     @staticmethod
-    def check_remote(remote_server, python_pkg_path="/home/ubuntu/.local/lib/python3.6/site-packages/"):
+    def check_remote(remote_server, python_pkg_path):
         conn = remote_server.classic_connect()
         import os
+        # import site
         import asgrids
-
+        # python_pkg_path=site.getsitepackages()[0]
         rpyc.classic.upload_package(
             conn, asgrids, os.path.join(python_pkg_path, "asgrids"))
         return False
@@ -78,10 +79,13 @@ class SmartGridSimulation(object):
         remote_machine = SshMachine(
             host=hostname, user=username, keyfile=keyfile)
         remote_server = DeployedServer(remote_machine)
+        conn = remote_server.classic_connect()
+        site = conn.modules.site
+        python_pkg_path=site.getsitepackages()[0]
         # if `asgrids` wasn't available remotely, now we installed it
         # but we need to reconnect to get an updated conn.modules
         # TODO Might not be needed if using execute/eval
-        if not self.check_remote(remote_server):
+        if not self.check_remote(remote_server, python_pkg_path):
             remote_server.close()
             remote_server = DeployedServer(remote_machine)
 
@@ -98,7 +102,7 @@ class SmartGridSimulation(object):
         if ntype is 'load':
             conn.execute("from asgrids import NetworkLoad")
             conn.execute("node=NetworkLoad()")
-            conn.execute("node.local={}".format(addr))
+            conn.execute("node.local='{}'".format(addr))
             node = conn.namespace['node']
         elif ntype is 'allocator':
             conn.execute("from asgrids import NetworkAllocator")
