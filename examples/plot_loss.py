@@ -33,30 +33,30 @@ def filter_data(data):
 
 #%%
 def calculate_rate(data, slice_range: list = [0, Inf]):
-        data = filter_data(data)
-        data = data.reset_index(drop=True)
-        data = data[data[2]>=max_vm][2].count()/data[2].count()
-        return data
+    data = filter_data(data)
+    data = data.reset_index(drop=True)
+    data = data[data[2]>=max_vm][2].count()/data[2].count()
+    return data
 
 #%%
 def calculate_time(data, slice_range: list = [0, Inf]):
-        data = filter_data(data)
-        # data[0]=data[0]-data.loc[0,0]
-        # data.drop(data[data[0]>287].index, inplace=True)
-        # data.drop(data[data[0]==0].index, inplace=True)
-        data.loc[data[data[2]<1.05].index, 2] = 0
-        data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
-        data = data[data>0]
-        return data
+    data = filter_data(data)
+    # data[0]=data[0]-data.loc[0,0]
+    # data.drop(data[data[0]>287].index, inplace=True)
+    # data.drop(data[data[0]==0].index, inplace=True)
+    data.loc[data[data[2]<1.05].index, 2] = 0
+    data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
+    data = data[data>0]
+    return data
         # return data
 
 def calculate_timediff(data, slice_range: list = [0, Inf]):
-        data = filter_data(data)
-        data.loc[data[data[2]<1.05].index, 2] = 0
-        data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
-        data = data[data>0]
-        return data.mean()
-        # return data
+    data = filter_data(data)
+    data.loc[data[data[2]<1.05].index, 2] = 0
+    data = data.groupby(1).apply(lambda g: trapz(g[2], x=g[0]))
+    data = data[data>0]
+    return data.mean()
+    # return data
 
 #%%
 parser = argparse.ArgumentParser(
@@ -85,7 +85,7 @@ parser.add_argument('--width', type=float,
                     default=1)
 parser.add_argument('--save', type=str, default='')
 parser.add_argument('--load', type=str, default='')
-parser.add_argument('--figsize', nargs=2, type=int, default=[24, 12])
+parser.add_argument('--figsize', nargs=2, type=int, default=[6, 3])
 
 #%%
 args = parser.parse_args()
@@ -124,8 +124,11 @@ if load != '':
     with open(load, 'rb') as pickle_file:
         hits_opf, hits_pi, hits_pv = pickle.load(pickle_file)
 else:
-    data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
-    hits_pv =  [calculate_rate(data)]
+    try:
+        data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
+        hits_pv =  [calculate_rate(data)]
+    except Exception as e:
+        hits_pv = [0.7]
     print(hits_pv)
     #%%
     for j in losses:
@@ -133,7 +136,7 @@ else:
         hits_pi[j] = []
         loss = ''
         if j == 0:
-            loss = '127.0.6.1'
+            loss = '127.0.0.1'
         elif j == 10:
             loss = '127.0.2.1'
         elif j == 20:
@@ -150,14 +153,14 @@ else:
             if with_opf:
                 try:
                     # print('reading sim.opf.{}loss.{}.log'.format(j,i))
-                    data = pd.read_csv(os.path.join(results, 'sim_{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
-                    hits_opf[j] = hits_opf[j] + [calculate_rate(data)]
+                    data = pd.read_csv(os.path.join(results, 'sim.opf.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
+                    hits_opf[j] = hits_opf[j] + [100*calculate_rate(data)]
                 except Exception as e:
                     print("ERROR:", e)
             if with_pi:
                 try:
                     print('reading sim.pi.{}loss.{}.log'.format(j,i))
-                    data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
+                    data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
                     hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
                 except Exception as e:
                     print(e)
@@ -169,6 +172,8 @@ if save != '':
     except Exception as e:
         print("Erroring pickling to file {}: {}".format(save, e))
 
+print([mean(hits_opf[i]) for i in hits_opf])
+print([mean(hits_pi[i]) for i in hits_pi])
 #%%
 fig = plt.figure(figsize=figsize)
 print("Generating %s"%plot_type)
