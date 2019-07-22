@@ -314,54 +314,38 @@ class SmartGridSimulation(object):
         except Exception as e:
             print(e)
 
-        print("Optimizing {} nodes".format(len(values)))
-        for nid, v in values.items():
-            if v >= 1.04:
-                print("Node {} above max threshold".format(nid))
-            elif v  <= 0.96:
-                print("node {} under min threshold".format(nid))
-            # We wanna know the actual voltage of the bus
-            # if nid in net.load['name'].tolist():
-            #     bus_id = net.load.loc[net.load['name'] == nid, 'bus'].item()
-            # elif nid in net.sgen['name'].tolist():
-            #     bus_id = net.sgen.loc[net.sgen['name'] == nid, 'bus'].item()
-            #bus_vn = net.bus['vn_kv'][bus_id].item()*1e3
-            bus_vn = 400  # v
+        print("Optimizing")
+        for name in net.load['name']:
+            bus_id = net.load.loc[net.load['name']==name, 'bus'].item()
             try:
-                # Listing all controllable loads, these are the PV generators that will be optimized
-                pv_gens = net.load.loc[net.load['controllable']
-                                    == True]['name'].tolist()
+                if not hasattr(net, 'res_bus'):
+                    return
+                v = net.res_bus.loc[bus_id]['vm_pu']*net.bus.loc[bus_id]['vn_kv']*1000 # converting nominal value to V
             except Exception as e:
                 print(e)
-            
-            if nid in pv_gens:
-                nids.append(nid)
-                # converting nominal values to absolute values in V
-                gen_vs.append(v*bus_vn)
+                return
+            if net.load.loc[net.load['name']==name, 'controllable'].item() == True:
+                nids.append(name)
+                gen_vs.append(v)
             else:
-                # converting nominal values to absolute values in V
-                load_vs.append(v*bus_vn)
                 try:
+                    load_vs.append(v)
                     # Using loads (non-generators) allocations from net as their maximum allocations (shouldn't have big effect)
                     # Maximum allocation for generators are -30kW
                     load_max_as.append(
                         net.load.loc[net.load['name'] == nid, 'p_kw'].item()*1e3)
                 except Exception as e:
                     print(e)
+                    return
         try:
-            if len(gen_vs) > 0:
-                # print("Optimizing {}".format([nid for nid in nids]))
-                _, pv_a = self.controller.generate_allocations(
-                    load_vs, gen_vs, load_max_as, [-30e3]*len(gen_vs))
-                # print(len(pv_a))
-            else:
-                return
+            _, pv_a = self.controller.generate_allocations(
+                load_vs, gen_vs, load_max_as, [-30e3]*len(gen_vs))
         except Exception as e:
             print("Error generating allocations: {}".format(e))
             raise e
         # print("optimizing {}".format(nid))
         try:
-            for a, nid in zip(pv_a, nids):
+            for a, nid in zip(pv_a, nids):                
                 allocation = Allocation(
                     a.aid, a.p_value/1e3, a.q_value/1e3, duty_cycle)
                 allocator.schedule(action=allocator.send_allocation, args=[nid, allocation])
