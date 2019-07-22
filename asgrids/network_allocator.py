@@ -3,7 +3,6 @@
 
 from .agent import Agent
 from .defs import EventId, Packet, Allocation
-from simpy.exceptions import Interrupt
 from itertools import count
 
 class NetworkAllocator(Agent):
@@ -173,6 +172,6 @@ class NetworkAllocator(Agent):
         """ Stops the NetworkAllocator Node and associated AsyncCommunication
         """
 
-        # Stop underlying simpy event loop
-        self.logger.info("Stopping Simpy")
+        # Stop underlying event loop
+        self.logger.info("Stopping event loop")
         super(NetworkAllocator, self).stop()
