@@ -87,7 +87,7 @@ else:
     for j in losses:
         loss = ''
         if j == 0:
-            loss = '127.0.6.1'
+            loss = '127.0.0.1'
         elif j == 10:
             loss = '127.0.2.1'
         elif j == 20:
@@ -105,11 +105,11 @@ else:
             try:
                 if with_opf:
                     print("reading for opf {}% loss: {}".format(j, i))
-                    data = pd.read_csv(os.path.join(results, 'sim_{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
+                    data = pd.read_csv(os.path.join(results, 'sim.opf.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
                     data_opf[j] = data_opf[j] + get_power_loss(data)
                 if with_pi:
                     print("reading for pi {}% loss: {}".format(j, i))
-                    data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(j,i)), header=None, delimiter='\t')
+                    data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
                     data_pi[j] = data_opf[j] + get_power_loss(data)
             except Exception as e:
                 print(e)
