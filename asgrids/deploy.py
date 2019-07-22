@@ -303,7 +303,6 @@ class SmartGridSimulation(object):
         # Some measures could be updates for the same nodes
         # We only take the most recent measures
         # We also clean up the queue along the way
-        optimize = False
         try:
             for _ in range(qsize):
                 nid, allocation = voltage_values.get()
@@ -312,13 +311,9 @@ class SmartGridSimulation(object):
                     return
                 v = allocation[2]
                 values[nid] = v
-                if v is not None and v >= max_vm:
-                    optimize = True
         except Exception as e:
             print(e)
-        if not optimize:
-            return
-        if len(values) > 0:
+
             print("Optimizing {} nodes".format(len(values)))
         for nid, v in values.items():
             if v >= 1.04:
@@ -369,11 +364,10 @@ class SmartGridSimulation(object):
             for a, nid in zip(pv_a, nids):
                 allocation = Allocation(
                     a.aid, a.p_value/1e3, a.q_value/1e3, duty_cycle)
-                allocator.send_allocation(nid=nid, allocation=allocation)
+                allocator.schedule(action=allocator.send_allocation, args=[nid, allocation])
         except Exception as e:
             print(e)
             print("Terminating PI controller")
-        values = {}
 
 
 # def live_plot_voltage(buses, plot_values, interval=10):
