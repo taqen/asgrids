@@ -2,7 +2,7 @@
 
 import logging
 import queue
-import time
+from time import monotonic as time
 from abc import ABCMeta
 from heapq import heappush, heappop
 from random import Random
@@ -40,7 +40,6 @@ class Agent(object, metaclass=ABCMeta):
     def __init__(self):
         """ Make sure a simulation environment is present and Agent is running.
 
-        :param env: a simpy simulation environment
         """
         self.nid = None
         self.type = None
@@ -125,7 +124,7 @@ class Agent(object, metaclass=ABCMeta):
             args = []
         self.logger.debug("scheduling {} after {} seconds".format(action, delay))
         try:
-        coro = self.call_later(delay, action, args)
+            coro = self.call_later(delay, action, args)
         except Exception as e:
             self.logger.debug(f'The coroutine raised an exception: {e!r}')
         try:
