@@ -314,7 +314,7 @@ class SmartGridSimulation(object):
         except Exception as e:
             print(e)
 
-            print("Optimizing {} nodes".format(len(values)))
+        print("Optimizing {} nodes".format(len(values)))
         for nid, v in values.items():
             if v >= 1.04:
                 print("Node {} above max threshold".format(nid))
