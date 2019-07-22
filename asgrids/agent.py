@@ -104,18 +104,16 @@ class Agent(object, metaclass=ABCMeta):
 
     async def call_later(self, delay, action, args):
         await asyncio.sleep(delay)
+        self.logger.debug("calling_soon {}".format(action))
         self.loop.call_soon(action, *args)
 
     def schedule(self, action, args=None, delay=0, callbacks=None):
         """
         The agent's schedule function.
-        First it creates a simpy events, that will then execute the action
-        when triggered.
-        The event is scheduled in the tasks queue, to be dequeued in the agent's
-        loop.
 
-        :param time: relative time from present to execute action
+        :param delay: relative time from present to execute action
         :param action: the handle to the function to be executed at time.
+        :param args: actions' arguments.
         :returns:
         :rtype:
 
@@ -125,7 +123,11 @@ class Agent(object, metaclass=ABCMeta):
             callbacks = []
         if args is None:
             args = []
+        self.logger.debug("scheduling {} after {} seconds".format(action, delay))
+        try:
         coro = self.call_later(delay, action, args)
+        except Exception as e:
+            self.logger.debug(f'The coroutine raised an exception: {e!r}')
         try:
             event = asyncio.run_coroutine_threadsafe(coro, self.loop)
         except Exception as e:
@@ -133,7 +135,7 @@ class Agent(object, metaclass=ABCMeta):
                 self.logger.warning(f'The coroutine raised an exception: {e!r}')
             return None
         msg = "Executing {} after {}s".format(action, delay)
-        #event.add_done_callback(lambda x: self.logger.debug(msg))
+        event.add_done_callback(lambda x: self.logger.debug(msg))
         for cb in callbacks:
             event.add_done_callback(cb)
         return event
