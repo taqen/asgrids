@@ -178,5 +178,5 @@ class Agent(object, metaclass=ABCMeta):
     def receive_handle(self, packet, src=None):
         raise NotImplementedError("must override receive_handle")
 
-    def loop_exception_handler(self, context):
+    def loop_exception_handler(self, obj, context):
         self.logger.debug(context['message'])
