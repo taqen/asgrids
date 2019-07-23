@@ -80,11 +80,11 @@ class NetworkLoad(Agent):
                 allocation = p.payload[0]
             else:
                 self.logger.warning("unsupported instance for packet Payload: {}".format(type(p.payload)))
-                raise ValueError
+                raise ValueError(allocation)
 
             self.logger.info("received allocation={}".format(allocation))
             self.send_ack([allocation, self.curr_measure], p.src)
-            self.schedule(self.handle_allocation, args=[allocation])
+            self.handle_allocation(allocation)
         elif msg_type == 'stop':
             self.logger.info("Received Stop from {}".format(p.src))
             self.send(Packet(ptype='stop_ack', src=self.local), p.src)
@@ -101,12 +101,8 @@ class NetworkLoad(Agent):
 
         """
         # Allocation is interpreted as a quota to be enforced
-        self.logger.debug("{} - Current allocation value is {}".format(self.local, self.curr_allocation))
-        # if abs(allocation.p_value) <= abs(self.max_allocation.p_value):
+        self.logger.debug("handling allocation {}".format(allocation))
         self.curr_allocation = allocation
-        # self.logger.info("{} - New allocation value is {}".format(self.local, self.curr_allocation))
-        # else:
-        #     self.logger.info("Can't execute allocation: {}. Beyond node's ability {}".format(allocation, self.max_allocation))
 
     def get_allocation(self):
         """ Tries to query an allocations source for a new allocation
