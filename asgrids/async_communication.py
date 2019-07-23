@@ -41,13 +41,11 @@ class AsyncCommunication(threading.Thread):
         self._context = zmq.asyncio.Context()
         self._poller = zmq.asyncio.Poller()
         self._clients = {}
+        self.event = asyncio.Event(loop=self._loop)
         name = 'AsyncCommThread'
-        if identity:
-            name = name + identity
         threading.Thread.__init__(self, name=name)
 
     def run(self):
-        self.running = True
         server_future = asyncio.ensure_future(self._run_server(), loop=self._loop)
         try:
             self._loop.run_until_complete(server_future)
@@ -58,16 +56,6 @@ class AsyncCommunication(threading.Thread):
         if remote not in self._clients:
             try:
                 self._clients[remote] = self._context.socket(zmq.DEALER)
-
-                if self._identity is not None:
-                    logger.info("identity is %s" % self._identity)
-                    identity = msgpack.packb(self._identity, encoding='utf-8', strict_types=True)
-                    try:
-                        self._clients[remote].setsockopt(zmq.IDENTITY, identity)
-                    except zmq.ZMQError as zmqerror:
-                        logger.error("Error setting socket identity. {}".format(zmqerror))
-                        raise zmqerror
-
                 # No lingering after socket is closed.
                 # This has proven to cause problems terminating asyncio when lingering infinitely
                 self._clients[remote].setsockopt(zmq.LINGER, 0)
@@ -93,18 +81,22 @@ class AsyncCommunication(threading.Thread):
             return
 
     async def _run_server(self):
-        assert self._local_address is not None, 'local_address not set'
-        assert self._callback is not None, 'callback is not set'
-        logger.debug('Server listening on address tcp://{}.'.format(self._local_address))
+        if self._local_address is None:
+            logger.warning('local_address not set')
+            raise ValueError(self._local_address)
+        if self._callback is None:
+            logger.warning('callback is not set')
+            raise ValueError(self._callback)
+        logger.warning('Server listening on address tcp://{}.'.format(self._local_address))
 
         self._server = self._context.socket(zmq.ROUTER)
         self._server.bind('tcp://{}'.format(self._local_address))
         self._poller.register(self._server, zmq.POLLIN)
         logger.info('running server on tcp://{}.'.format(self._local_address))
-        while self.running:
+        while not self.event.is_set():
             items = dict(await self._poller.poll(self._timeout))
             if self._server in items and items[self._server] == zmq.POLLIN:
-                logger.debug("receiving at server")
+                logger.info("receiving at server {}".format(self._local_address))
                 _, msg = await self._server.recv_multipart()
                 try:
                     p = msgpack.unpackb(msg, ext_hook=ext_unpack, encoding='utf-8')
@@ -127,7 +119,10 @@ class AsyncCommunication(threading.Thread):
 
     def stop(self):
         logger.info("Stopping AsyncCommThread")
-        self.running = False
+        try:
+            self._loop.call_soon_threadsafe(self.event.set)
+        except Exception as e:
+            logger.warning(e)
         # self._poller.unregister(self._client)
         for remote in self._clients:
             self._clients[remote].close()
