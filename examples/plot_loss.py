@@ -128,7 +128,7 @@ else:
         data = pd.read_csv(os.path.join(results, 'sim_no_control.log'), header=None, delimiter='\t')
         hits_pv =  [calculate_rate(data)]
     except Exception as e:
-        hits_pv = [0.7]
+        hits_pv = [10]
     print(hits_pv)
     #%%
     for j in losses:
@@ -161,7 +161,7 @@ else:
                 try:
                     print('reading sim.pi.{}loss.{}.log'.format(j,i))
                     data = pd.read_csv(os.path.join(results, 'sim.pi.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
-                    hits_pi[j] = hits_pi[j] + [calculate_rate(data)]
+                    hits_pi[j] = hits_pi[j] + [100*calculate_rate(data)]
                 except Exception as e:
                     print(e)
 
@@ -172,8 +172,15 @@ if save != '':
     except Exception as e:
         print("Erroring pickling to file {}: {}".format(save, e))
 
-print([mean(hits_opf[i]) for i in hits_opf])
-print([mean(hits_pi[i]) for i in hits_pi])
+if with_opf:
+#    print("means:")
+    print([mean(hits_opf[i]) for i in hits_opf])
+#    print("mins:")
+#    print([min(hits_opf[i]) for i in hits_opf])
+#    print("maxs:")
+#    print([max(hits_opf[i]) for i in hits_opf])
+if with_pi:
+    print([mean(hits_pi[i]) for i in hits_pi])
 #%%
 fig = plt.figure(figsize=figsize)
 print("Generating %s"%plot_type)
