@@ -69,10 +69,10 @@ class Agent(object, metaclass=ABCMeta):
     def local(self, value):
         self._local = value
         self.comm._local_address = value
-        if self.comm.event and not self.comm.event.is_set():
-            self.comm.stop()
-            self.comm._local_address = value
-            self.comm.start()
+        # if self.comm.event and not self.comm.event.is_set():
+        #     self.comm.stop()
+        #     self.comm._local_address = value
+        #     self.comm.start()
 
     @property
     def callback(self):
