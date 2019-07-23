@@ -278,9 +278,9 @@ class SmartGridSimulation(object):
                 raise(e)
             try:
                 allocation = Allocation(0, p, q, duty_cycle*3)
-                print(name, ": ", allocation)
-                allocator.schedule(action=allocator.send_allocation, args=[name, allocation])
-                # allocator.send_allocation(nid=name, allocation=allocation)
+                #print(name, ": ", allocation)
+                # allocator.schedule(action=allocator.send_allocation, args=[name, allocation])
+                allocator.send_allocation(nid=name, allocation=allocation)
                 # print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
             except Exception as e:
                 print("Error scheduing allocation: {}".format(e))
