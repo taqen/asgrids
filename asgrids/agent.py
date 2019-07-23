@@ -46,7 +46,7 @@ class Agent(object, metaclass=ABCMeta):
         self.type = None
         self._local = None
         if mode == 'udp':
-        self.comm = AsyncUdp()
+            self.comm = AsyncUdp()
         elif mode == 'tcp':
             self.comm = AsyncCommunication()
         else:
