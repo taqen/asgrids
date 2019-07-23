@@ -10,6 +10,7 @@ from threading import Thread, Event
 
 import asyncio
 from .async_udp_communication import AsyncUdp
+from .async_communication import AsyncCommunication
 from .defs import Packet
 
 logger = logging.getLogger(__name__)
