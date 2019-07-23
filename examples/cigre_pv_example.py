@@ -191,8 +191,12 @@ def generate_allocations(node, old_allocation, now=0):
                 pass
     else:
         try:
-            t, p, q, d = allocation_generators[node][allocation_generators[node][0]>=real_now][0]
+            agen = allocation_generators[node]
+            agen = agen.iloc[int(real_now)]
+            t, p, q, d = agen
+            # t, p, q, d = allocation_generators[node][allocation_generators[node][0]>=real_now][0]
         except Exception as e:
+            print(e)
             pass
     allocation = Allocation(0, p*p_factor, q, 1)
     return allocation
