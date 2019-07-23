@@ -73,6 +73,9 @@ parser.add_argument('--accel', type=float,
                     default=1.0)
 parser.add_argument('--p-factor', type=float,
                     default=1.0)
+parser.add_argument('--mode', type=str,
+                    default='udp')
+                
 parser.add_argument('--no-forecast', action='store_true')
 parser.add_argument('--check-limit', action='store_true')
 args = parser.parse_args()
@@ -96,6 +99,7 @@ simtime = args.sim_time
 output = args.output
 initial_port = args.initial_port
 address = args.address
+mode = args.mode
 
 curves = pd.read_csv(CSV_FILE)
 curves.drop(curves[curves['timestamp']<=49].index, inplace=True)
@@ -129,7 +133,7 @@ print("WITH PLOT: {}".format(plot_voltage))
 print("SIM TIME: {}s".format(simtime))
 print("INITIAL ADDRESS {}:{}".format(address, initial_port))
 print("MAX VM_PU {}".format(max_vm))
-
+print("COMM MODE {}".format(mode))
 # Create SmartGridSimulation environment
 sim: SmartGridSimulation = SmartGridSimulation()
 terminate = Event()
@@ -232,13 +236,12 @@ def allocator_measure_updated(allocation: list, node_addr: str):
     #         time(), addr_to_name[node_addr], allocation[0].p_value, allocation[0].q_value, v))
 
 
-def create_nodes(net, remote):
+def create_nodes(net, remote, mode='udp'):
     # Create remote agents of type NetworkLoad
     for i in range(len(net.load.index)):
-        node = sim.create_node('load', '{}:{}'.format(address, next(port)))
+        node = sim.create_node(ntype='load', addr='{}:{}'.format(address, next(port)), mode=mode)
         node.update_measure_period = 1
         node.report_measure_period = 1
-        node.run()
         measure_queues[node.local] = Queue(maxsize=1)
         node.update_measure_cb = allocation_updated
         node.joined_callback = joined_network
@@ -255,13 +258,14 @@ def create_nodes(net, remote):
         nodes.append(node)
 
     for node in nodes:
+        node.run()
         packet = Packet('join_ack', src=allocator.local, dst=node.local)
         node.handle_receive(packet)
     return nodes
 
 
 allocator = sim.create_node(
-    ntype='allocator', addr="{}:{}".format(address, next(port)))
+    ntype='allocator', addr="{}:{}".format(address, next(port)), mode=mode)
 allocator.identity = allocator.local
 allocator.run()
 
@@ -275,7 +279,7 @@ net.load['max_q_kvar'] = None
 net.load['controllable'] = False
 
 
-nodes = create_nodes(net, allocator.local)
+nodes = create_nodes(net, allocator.local, mode=mode)
 if not skip_join:
     print("waiting for {} nodes to join network".format(len(nodes)))
     network_ready.get()

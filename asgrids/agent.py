@@ -37,14 +37,19 @@ class ErrorModel(object):
 
 
 class Agent(object, metaclass=ABCMeta):
-    def __init__(self):
+    def __init__(self, mode='udp'):
         """ Make sure a simulation environment is present and Agent is running.
 
         """
         self.nid = None
         self.type = None
         self._local = None
+        if mode == 'udp':
         self.comm = AsyncUdp()
+        elif mode == 'tcp':
+            self.comm = AsyncCommunication()
+        else:
+            raise ValueError(mode)
         self.comm._callback = self.receive
         self._error_model = None
         self._sim_thread = Thread(target=self._run)

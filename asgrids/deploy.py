@@ -119,16 +119,14 @@ class SmartGridSimulation(object):
     Creates a local node
     """
 
-    def create_node(self, ntype, addr, identity=None):
+    def create_node(self, ntype, addr, mode='udp'):
         if ntype is 'load':
-            node = NetworkLoad()
+            node = NetworkLoad(mode=mode)
             node.local = addr
-            if identity:
-                node.identity = identity
             self.nodes[addr] = node
             return node
         elif ntype is 'allocator':
-            node = NetworkAllocator()
+            node = NetworkAllocator(mode=mode)
             node.local = addr
             self.nodes[addr] = node
             return node

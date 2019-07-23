@@ -10,8 +10,8 @@ from .defs import Allocation, Packet
 
 
 class NetworkLoad(Agent):
-    def __init__(self, local=None, remote=None):
-        super(NetworkLoad, self).__init__()
+    def __init__(self, local=None, remote=None, mode='udp'):
+        super(NetworkLoad, self).__init__(mode=mode)
         self.remote = remote
         self.nid = self.local
         self.curr_allocation: Allocation = Allocation()
