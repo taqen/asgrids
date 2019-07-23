@@ -251,7 +251,7 @@ class SmartGridSimulation(object):
         except Exception as e:
             print("Error getting list of controllable loads: {}".format(e))        
         try:
-            pp.runopp(net, verbose=False)
+            pp.runopp(net, init='pf', verbose=False)
         except OPFNotConverged as e:
             print("Runopp failed: {}".format(e))
             print(net.load['p_kw'])
@@ -278,7 +278,7 @@ class SmartGridSimulation(object):
                 raise(e)
             try:
                 allocation = Allocation(0, p, q, duty_cycle*3)
-                #print(name, ": ", allocation)
+                print(name, ": ", allocation)
                 # allocator.schedule(action=allocator.send_allocation, args=[name, allocation])
                 allocator.send_allocation(nid=name, allocation=allocation)
                 # print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
@@ -343,10 +343,11 @@ class SmartGridSimulation(object):
             raise e
         # print("optimizing {}".format(nid))
         try:
-            for a, nid in zip(pv_a, nids):                
+            for a, nid in zip(pv_a, nids):
                 allocation = Allocation(
                     a.aid, a.p_value/1e3, a.q_value/1e3, duty_cycle)
-                allocator.schedule(action=allocator.send_allocation, args=[nid, allocation])
+                print("{}: {}".format(nid, allocation))
+                allocator.send_allocation(nid, allocation)
         except Exception as e:
             print(e)
             print("Terminating PI controller")
