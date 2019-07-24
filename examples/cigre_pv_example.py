@@ -80,7 +80,7 @@ parser.add_argument('--no-forecast', action='store_true')
 parser.add_argument('--check-limit', action='store_true')
 args = parser.parse_args()
 opf_forecast = not args.no_forecast
-opf_check = args.check_limit
+check_limit = args.check_limit
 p_factor = args.p_factor
 accel=args.accel
 assert accel > 0
@@ -344,10 +344,10 @@ with Executor(max_workers=200) as executor:
             # net_copy = deepcopy(net)
             if optimizer == 'pi':
                 print("Optimizing network in realtime with PI")
-                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
+                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle*accel, max_vm, check_limit], optimize_cycle*accel)
             elif optimizer == 'opf':
                 print("Optimizing network in realtime with OPF")
-                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm, opf_forecast, opf_check], optimize_cycle*accel)
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm, opf_forecast, check_limit], optimize_cycle*accel)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
 

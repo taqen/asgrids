@@ -287,7 +287,7 @@ class SmartGridSimulation(object):
                 print("Terminating OPF controller")
                 raise(e)
 
-    def optimize_network_pi(self, net, allocator, voltage_values: Queue, duty_cycle=10, max_vm=1.01, accel=1.0):
+    def optimize_network_pi(self, net, allocator, voltage_values: Queue, duty_cycle=10, max_vm=1.05, check_limit=True, accel=1.0):
         if not hasattr(self, 'controller'):
             print("Creating PIController: max_vm = %f"%max_vm)
             self.controller = PIController(maximum_voltage=400*max_vm, duration=duty_cycle)
@@ -301,6 +301,7 @@ class SmartGridSimulation(object):
         # Some measures could be updates for the same nodes
         # We only take the most recent measures
         # We also clean up the queue along the way
+        optimize = False
         try:
             for _ in range(qsize):
                 nid, allocation = voltage_values.get()
@@ -308,10 +309,14 @@ class SmartGridSimulation(object):
                     print("Terminating optimize_network_pi")
                     return
                 v = allocation[2]
+                if v >=max_vm - 0.01:
+                    optimize = True
                 values[nid] = v
         except Exception as e:
             print(e)
 
+        if not optimize and check_limit:
+            return
         print("Optimizing")
         for name in net.load['name']:
             bus_id = net.load.loc[net.load['name']==name, 'bus'].item()
