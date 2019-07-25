@@ -162,9 +162,6 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     try:
         allocations_queue.put_nowait(
             [timestamp, node_addr, allocation.p_value, allocation.q_value])
-    except Full:
-        # print("Error in allocation_updated(allocations_queue): {}".format(e))
-        return None
     except Exception as e:
         print("Error in allocation_updated(allocations_queue): {}".format(e))
         return None
@@ -306,7 +303,7 @@ with Executor(max_workers=200) as executor:
     try:
         if run_pp:
             print("Running power flow analysis")
-            executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, initial_time, (True if pp_cycle is 0 else False), None], pp_cycle)
+        executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, None, False, initial_time, None], pp_cycle)
         if optimize:
             if optimizer == 'pi':
                 print("Optimizing network in realtime with PI")
