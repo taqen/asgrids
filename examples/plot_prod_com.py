@@ -97,19 +97,22 @@ else:
             except Exception as e:
                 print(e)
             try:    
-                data = pd.read_csv(os.path.join(results, 'udp', 'sim.pi.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
-                data_udp[j] = data_tcp[j] + [100*get_power_loss(data)]
+                data = pd.read_csv(os.path.join(results, 'udp', 'sim.opf.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
+                data_udp[j] = data_udp[j] + [100*get_power_loss(data)]
             except Exception as e:
                 print(e)
 if save != '':
     with open(save, 'wb') as pickle_file:
         pickle.dump([data_tcp, data_udp], pickle_file)
 
+print(data_tcp)
+print(data_udp)
 
 fig = plt.figure(figsize=figsize)
 ax = fig.add_subplot(111)
 for j in losses:
     x = [0, 2, 4, 6, 8]
+    x = x[0:len(losses)]
 
     #plotting for tcp
     values = list(data_tcp.values())
