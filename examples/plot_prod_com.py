@@ -105,8 +105,6 @@ if save != '':
     with open(save, 'wb') as pickle_file:
         pickle.dump([data_tcp, data_udp], pickle_file)
 
-print(data_tcp)
-print(data_udp)
 
 fig = plt.figure(figsize=figsize)
 ax = fig.add_subplot(111)
@@ -126,8 +124,8 @@ for j in losses:
     stdy = [np.std(i) for i in values]
     udp_bar = ax.bar([i+width/2 for i in x], y, yerr=stdy, color='green', width=width, label="%d%% loss"%j)
 
-    # ax.set_xticks([0, 10, 20, 30, 60])
-    ax.set_xticklabels(["0%", "10%", "20%", "30%", "60%"], fontsize=12)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{i}%" for i in losses], fontsize=12)
     ax.set_ylabel("Production lost (%)", fontsize=14)
     ax.set_xlabel("Packet loss (%)", fontsize=14)
     ax.xaxis.set_tick_params(labelsize=12)
