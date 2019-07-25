@@ -66,8 +66,7 @@ def get_power_loss(data):
         if value <=0:
             total = total + sum(g[2])
     data = 1-abs(total)/data_nc
-    print(data)
-    return [data]
+    return data
 
 if load != '':
     with open(load, 'rb') as pickle_file:
@@ -94,12 +93,12 @@ else:
         for i in runs:
             try:
                 data = pd.read_csv(os.path.join(results, 'tcp', 'sim.opf.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
-                data_tcp[j] = data_tcp[j] + 100*get_power_loss(data)
+                data_tcp[j] = data_tcp[j] + [100*get_power_loss(data)]
             except Exception as e:
                 print(e)
             try:    
                 data = pd.read_csv(os.path.join(results, 'udp', 'sim.pi.{}loss.{}.log'.format(loss,i)), header=None, delimiter='\t')
-                data_udp[j] = data_tcp[j] + 100*get_power_loss(data)
+                data_udp[j] = data_tcp[j] + [100*get_power_loss(data)]
             except Exception as e:
                 print(e)
 if save != '':
