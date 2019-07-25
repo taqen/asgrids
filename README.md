@@ -31,22 +31,25 @@ This script assumes that the results are stored in the same folder in the format
 The scenario is implemented in simulation script `./examples/cigre_pv_example.py`.
 The script will deploy a CIGRE LV network as implemented in `pandapower`, along with a power flow analyzer and optimal power flow solver as described in our paper.
 To run multiple simulation campaigns, the script is executed as follows:
+
 ```bash
 for run in 1 2 3 4 5 6 7 8 9 10; do for address in "127.0.0.1" "127.0.2.1" "127.0.3.1" "127.0.4.1" "127.0.5.1"; do for mode in "tcp" "udp"; do taskset -c 0 python cigre_pv_example.py --initial-port 5000 --with-pv --optimize --optimize-cycle 3 --optimizer opf --address $address --max-vm 1.05 --mode $mode --output "./results/${mode}/sim.${optimizer}.${address}loss.${run}.log"; done; done;done
 ```
+
 Assuming that local interfaces: 127.0.0.1, 127.0.2.1, 127.0.3.1, 127.0.4.1, 127.0.5.1 are configure with `netem` through `./examples/create_netem.sh` to exhibit the packet losses: 0%, 10%, 20%, 30%, 60% consecutively.
 
 Plotting the results will rely on two scripts: 
-    1. `./examples/plot_loss_com.py`: to generate voltage violates per packet loss rate figure.
-    The figures in the paper are generated with this configuration:
-    ```bash
+
+1. `./examples/plot_loss_com.py`: to generate voltage violates per packet loss rate figure.
+The figures in the paper are generated with this configuration:
+```bash
     python plot_loss_com.py --runs 1 2 3 4 5 6 7 8 9 10 --losses 0 10 20 30 60 --output bars_loss.png --results ./results/ --width 0.5 --figsize 8 4
-    ```
-    2. `./examples/plot_prod_com.py`: to generate production loss rate per packet loss rate figure.
-    The figures in the paper are generated with this configuration:
-    ```bash
-    python plot_prod_com.py --runs 1 2 3 4 5 6 7 8 9 10 --losses 0 10 20 30 60 --output bars_loss.png --results ./results/ --width 0.5 --figsize 8 4
-    ```
+```
+2. `./examples/plot_prod_com.py`: to generate production loss rate per packet loss rate figure.
+The figures in the paper are generated with this configuration:
+```bash
+python plot_prod_com.py --runs 1 2 3 4 5 6 7 8 9 10 --losses 0 10 20 30 60 --output bars_loss.png --results ./results/ --width 0.5 --figsize 8 4
+```
     
     
 It is possible to save the process data for quick reuse to tune/tweak the plot, by provided `--save data.pkl` during a first run, the loading with `--load data.pkl` in later runs. Runs, losses and figure size can also be selected and plotted individually or in any configuration by playing the scripts arguments.
