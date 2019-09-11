@@ -17,13 +17,13 @@ DESCRIPTION = 'Smart Electrical Networks Simulator'
 URL = 'https://github.com/takienn/asgrids'
 EMAIL = 'takai.ken@gmail.com'
 AUTHOR = 'Takai Eddine Kennouche'
-REQUIRES_PYTHON = '>=3.5.3'
+REQUIRES_PYTHON = '>=3.6'
 VERSION = 0
 
 # What packages are required for this module to be executed?
 REQUIRED = [
-    'msgpack>=0.6.1', 'simpy>=3.0.11', 'pyzmq>=17.1.2', 'rpyc>=4.0.2', 'matplotlib>=3.0.2', 'numpy>=1.16.1',
-    'pandapower==1.6.1', 'pandas>=0.24.1', 'joblib>=0.13.1', 'plumbum>=1.6.7'
+    'msgpack>=0.6.1', 'pyzmq>=17.1.2', 'rpyc>=4.0.2',
+    'pandapower==1.6.1', 'joblib>=0.13.1', 'plumbum>=1.6.7'
 ]
 TEST_REQUIRED = ['pytest>=4.2.0']
 
