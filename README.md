@@ -87,4 +87,5 @@ It is possible to save the process data for quick reuse to tune/tweak the plot, 
 
 **Note**
 
-These two scripts assume that the results are stored in `./results/tcp` and `./results/udp` for tcp and udp data consecutively, in the format used above.
+- These two scripts assume that the results are stored in `./results/tcp` and `./results/udp` for tcp and udp data consecutively, in the format used above.
+- The repository already contains paper results stored in ``loss_com.pkl`` and ``prod_com.pkl``, that can be loaded with the ``--load`` flag for faster re-generating of plots.
