@@ -1,7 +1,24 @@
-# About
+# APEEC 2019 Repository Overview
+This repository provides training and testing code and data for the [IEEE APPEEC 2019 paper](paper/paper.pdf):
+
+["ASGriDS: **A**synchronous **S**mart **Gri**ds **D**istributed **S**imulator"](paper/paper.pdf)
+
+# About asgrids
 **asgrids** is an **a**synchronous **s**mart **gri**ds **d**istributed **s**imulator. It provides an environment to describe a multi-model smart-grid network, in terms of electrical/communication topology, plus control logic and behavior of its sensors, actuators and components.
 
 The project is still under development and the code is therefore experimental, and is released under a GPL-3.0 license, which is given in the ``LICENSE`` file.
+
+## Citation
+
+<pre>
+@InProceedings{kennouche_2019_appeec,
+author = {Kennouche, Takai-Eddine and Cadoux, Florent and Gast, Nicolas and Vinot, Beno&#238t},
+title = {ASGriDS: Asynchronous Smart Grids Distributed Simulator},
+booktitle = {IEEE PES Asia-Pacific Power and Energy Engineering Conference (APPEEC)},
+month = {December},
+year = {2019}
+}
+</pre>
 
 # Requirements
 - Python 3.6 and higher.
@@ -15,12 +32,8 @@ Or (preferably) setup locally to reflect modifications without needing rebuildin
 
 ``python setup.py develop``
 
-# APEEC 2019 Repository Overview
-This repository provides training and testing code and data for IEEE APPEEC 2019 paper:
 
-"ASGriDS: **A**synchronous **S**mart **Gri**ds **D**istributed **S**imulator"
-
-# Setup
+# Setup for APEEC 2019 results
 - [asgrids](https://github.com/takienn/asgrids): 
 ```bash
 git clone -b appeec19 --single-branch https://github.com/takienn/asgrids.git
