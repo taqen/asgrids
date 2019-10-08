@@ -26,6 +26,13 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
