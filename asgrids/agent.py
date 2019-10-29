@@ -99,8 +99,11 @@ class Agent(object, metaclass=ABCMeta):
     def run(self):
         self.logger = logging.getLogger(
             '{}.{}.{}'.format(__name__, self.type, self.local))
-        self.comm.start()
-        self._sim_thread.start()
+        try:
+            self.comm.start()
+            self._sim_thread.start()
+        except Exception as e:
+            self.logger.warning(f"Couldn't run agent: {e}")
         
 
     def _run(self):

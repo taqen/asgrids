@@ -20,7 +20,13 @@ class NetworkAllocator(Agent):
         self.stop_timeouts = {}
         self.aid_count = count()
         # various callbacks
-        self.allocation_updated = None
+        self.allocation_updated: Callable = None
+        self.joined_callback: Callable = None
+
+    def run(self):
+        super(NetworkAllocator, self).run()
+        ## The allocator is immediately part of the network
+        self.joined_callback(self.local, self.local)
 
     def receive_handle(self, p: Packet, src=None):
         """ Handle packets received and decoded at the AsyncCommunication layer.
@@ -87,7 +93,7 @@ class NetworkAllocator(Agent):
                     try:
                         self.allocation_updated(allocation, nid)
                     except Exception as e:
-                        self.logger.warning("Failed calling allocation_updated({}, {}".format(allocation, nid))
+                        self.logger.warning("Failed calling allocation_updated({}, {}): {}".format(allocation, nid, e))
 
                 self.nodes[nid] = allocation
 

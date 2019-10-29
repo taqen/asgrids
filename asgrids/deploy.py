@@ -16,30 +16,20 @@ from time import monotonic as time, sleep
 from pandapower import pp, OPFNotConverged, LoadflowNotConverged
 from .network_allocator import NetworkAllocator
 from .network_load import NetworkLoad
-from .defs import Allocation
+from .defs import Allocation, Packet
 from .controller import PIController
 import logging
 import sys, traceback
-# logging.basicConfig(filename='simulation.log',
-#                             filemode='a',
-#                             format='%(message)s',
-#                             # datefmt='%H:%M:%S',
-#                             level=logging.DEBUG)
-# logger = logging.getLogger('SmartGridSimulation')
-# logger.setLevel(logging.INFO)
-# fh = logging.FileHandler('simulation.log', mode='w')
-# fh.setLevel(logging.INFO)
-# logger.addHandler(fh)
-
 
 class SmartGridSimulation(object):
     def __init__(self):
-        self.nodes = {}
-        self.conns = {}
-        self.remote_machines = []
-        self.remote_servers = []
-        self.server_threads = []
-
+        self.nodes: dict = {}
+        self.conns: dict = {}
+        self.remote_machines: list = []
+        self.remote_servers: list = []
+        self.server_threads: list = []
+        self.network_ready: Queue = Queue(1)
+        self.network_count: list = []
         # provide rpyc's deliver as a local function
         # This function allows deliver objects to remote machines
         self.deliver = deliver
@@ -55,17 +45,32 @@ class SmartGridSimulation(object):
     """
     Make sure 'asgrids' library is available remotely
     """
-
-    @staticmethod
-    def check_remote(remote_server, python_pkg_path):
-        conn = remote_server.classic_connect()
+    def check_remote(self, remote_machine, username):
         import os
-        # import site
         import asgrids
-        # python_pkg_path=site.getsitepackages()[0]
-        rpyc.classic.upload_package(
-            conn, asgrids, os.path.join(python_pkg_path, "asgrids"))
-        return False
+        remote_server = DeployedServer(remote_machine)
+        conn = remote_server.classic_connect()
+        site = conn.modules.site
+        python_pkg_path = site.getsitepackages()[0].split('/')[-2:]
+        python_pkg_path = "/home/{}/.local/lib/{}/{}".format(username, python_pkg_path[0], python_pkg_path[1])
+        conn.execute("import sys")
+        conn.execute("sys.path.append('{}')".format(python_pkg_path))
+        try:
+            conn.execute('import asgrids')
+        except ModuleNotFoundError as e:
+            # Making sure all asgrids requirements are installed remotely
+            curr_path = os.path.dirname(os.path.realpath(__file__))
+            remote_machine["pip"]["install"]["--user"]["-U"]["pip"]()
+            with open("{}/requirements.txt".format(curr_path[:-8]), 'r') as fp:
+                for cnt, pkgname in enumerate(fp):
+                    remote_machine["pip"]["install"]["--user"]["{}".format(pkgname)]()
+            rpyc.classic.upload_package(
+                conn, asgrids, os.path.join(python_pkg_path, "asgrids"))
+            remote_server.close()
+            remote_server = DeployedServer(remote_machine)
+            conn = remote_server.classic_connect()
+        
+        return remote_server, conn
 
     """
     Create node with type 'ntype' on the remote machine `hostname`
@@ -73,43 +78,39 @@ class SmartGridSimulation(object):
     as if it was created locally.
     """
 
-    def create_remote_node(self, hostname, username, keyfile, ntype, addr, config=None):
-        if config is None:
-            config = {}
+    def create_remote_node(self, hostname, username, keyfile, ntype, addr):
         remote_machine = SshMachine(
             host=hostname, user=username, keyfile=keyfile)
-        remote_server = DeployedServer(remote_machine)
-        conn = remote_server.classic_connect()
-        site = conn.modules.site
-        python_pkg_path=site.getsitepackages()[0]
-        # if `asgrids` wasn't available remotely, now we installed it
-        # but we need to reconnect to get an updated conn.modules
-        # TODO Might not be needed if using execute/eval
-        if not self.check_remote(remote_server, python_pkg_path):
-            remote_server.close()
-            remote_server = DeployedServer(remote_machine)
-
+        remote_server, conn = self.check_remote(remote_machine, username)
         self.remote_machines.append(remote_machine)
         self.remote_servers.append(remote_server)
-        conn = remote_server.classic_connect()
         serving_thread = BgServingThread(conn)
         self.server_threads.append(serving_thread)
         self.conns[addr] = conn
+        try:
+            conn.modules.sys.stdout = sys.stdout
+            # conn.modules.sys.stderr = sys.stderr
+        except Exception as e:
+            print(f"Error seting remote stdout/stderr: {e}")
 
         # Using execute/eval allows working on a remote single namespace
         # useful when teleporting functions that need using remote object names
         # as using conn.modules create a locate but not a remote namespace member
         if ntype is 'load':
             conn.execute("from asgrids import NetworkLoad")
-            conn.execute("node=NetworkLoad()")
+            conn.execute("from sys import stdout")
+            conn.execute(f"node=NetworkLoad(stdout=stdout)")
             conn.execute("node.local='{}'".format(addr))
             node = conn.namespace['node']
+
         elif ntype is 'allocator':
             conn.execute("from asgrids import NetworkAllocator")
             conn.execute("node=NetworkAllocator()")
             node = conn.namespace['node']
         else:
             raise ValueError("Can't handle ntype == {}".format(ntype))
+        
+        node.joined_callback = self.joined_network
         self.nodes[addr] = node
 
         # Return node netref object and rpyc connection
@@ -118,33 +119,42 @@ class SmartGridSimulation(object):
     """
     Creates a local node
     """
-
     def create_node(self, ntype, addr, mode='udp'):
         if ntype is 'load':
             node = NetworkLoad(mode=mode)
-            node.local = addr
-            self.nodes[addr] = node
-            return node
         elif ntype is 'allocator':
             node = NetworkAllocator(mode=mode)
-            node.local = addr
-            self.nodes[addr] = node
-            return node
-
-    """
-    Runs the created remote objects
-    """
-
-    def run(self):
-        for node in self.nodes:
-            node.run()
+        node.local = addr
+        node.joined_callback = self.joined_network
+        self.nodes[addr] = node
+        return node
 
     def get_node(self, ind):
         return self.nodes[ind]
 
     """
-    Stops the remotely created nodes
+    Start the network nodes
     """
+    def start(self, skip_join=False):
+        allocator = list(filter(lambda node: node.type == "NetworkAllocator", [*self.nodes.values()]))[0]
+        for _, node in self.nodes.items():
+            try:
+                node.run()
+            except Exception as e:
+                print(e)
+            if node.type=="NetworkLoad":
+                packet = Packet('join_ack', src=allocator.local, dst=node.local)
+                node.handle_receive(packet)
+
+        if not skip_join:
+            print("waiting for {} nodes to join network".format(len(self.nodes)))
+            self.network_ready.get()
+        return time()
+
+    def joined_network(self, src, dst):
+        self.network_count.append(src)
+        if len(self.network_count) == len(self.nodes) and len(self.nodes) != 0:
+            self.network_ready.put(1)
 
     def stop(self):
         for _, node in self.nodes.items():
@@ -158,15 +168,13 @@ class SmartGridSimulation(object):
         self.shutdown = True
 
 
-    def runpp(self, net, allocations_queue: Queue, measure_queues: dict, plot_queue: Queue, with_plot=False, initial_time=0, logger=None):
+    def runpp(self, net, allocations_queue: Queue, measure_queues: dict, initial_time=0, logger=None):
         """Perform power flow analysis to collect voltage values of all the buses
         
         Args:
             net ([type]): pandapower network
             allocations_queue (Queue): Contains updated p,q values that will be fed to the power flow analysis loop
             measure_queues (dict): Measure results will be stored here
-            plot_queue (Queue): values sotred here are destined for plotting
-            with_plot (bool, optional): Defaults to False. Whether or not to generate plot values
             initial_time (int, optional): Defaults to 0.
         """
         qsize = allocations_queue.qsize()
@@ -254,8 +262,6 @@ class SmartGridSimulation(object):
             pp.runopp(net, init='pf', verbose=False)
         except OPFNotConverged as e:
             print("Runopp failed: {}".format(e))
-            print(net.load['p_kw'])
-
             for row in c_loads.iterrows():
                 p = 0
                 q = 0
@@ -278,7 +284,6 @@ class SmartGridSimulation(object):
                 raise(e)
             try:
                 allocation = Allocation(0, p, q, duty_cycle*3)
-                print(name, ": ", allocation)
                 # allocator.schedule(action=allocator.send_allocation, args=[name, allocation])
                 allocator.send_allocation(nid=name, allocation=allocation)
                 # print("OPF SENT ALLOCATION {}:{} to {}".format(p, q , name))
@@ -351,7 +356,6 @@ class SmartGridSimulation(object):
             for a, nid in zip(pv_a, nids):
                 allocation = Allocation(
                     a.aid, a.p_value/1e3, a.q_value/1e3, duty_cycle)
-                print("{}: {}".format(nid, allocation))
                 allocator.send_allocation(nid, allocation)
         except Exception as e:
             print(e)

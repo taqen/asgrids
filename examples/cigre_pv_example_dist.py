@@ -1,25 +1,24 @@
 from queue import Queue, Full, Empty
 from threading import Event, Lock
 from time import monotonic as time, sleep
-from asgrids import SmartGridSimulation, Allocation, Packet#, runpp, optimize_network_pi, optimize_network_opf#, live_plot_voltage
+from asgrids import SmartGridSimulation, Allocation, Packet
 from signal import signal, SIGINT
 import pandapower.networks as pn
 import pandapower as pp
-import pandas as pd
-import matplotlib.animation as animation
-import matplotlib.pyplot as plt
-from copy import deepcopy
 import numpy as np
+import pandas as pd
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor as Executor
 import argparse
 import logging
+import functools
+import sys
 
 addr_to_name: dict = {}
 allocations_queue: Queue = Queue()
 measure_queues: dict = {}
 network_size: list = []
 network_ready: Queue = Queue(1)
-plot_values: Queue = Queue()
 voltage_values: Queue = Queue()
 allocation_generators: dict = {}
 lock = Lock()
@@ -32,15 +31,11 @@ parser.add_argument('--with-pv', action='store_true',
                     help='with or without PV power production')
 parser.add_argument('--csv-file', type=str,
                     help='CSV database with loads timeseries',
-                    default='../victor_scripts/cigre/curves.csv')
+                    default='./cigre_curves.csv')
 parser.add_argument('--json-file', type=str,
                     help='CSV database with loads timeseries',
-                    default='../victor_scripts/cigre/cigre_network_lv.json')
+                    default='./cigre_network_lv.json')
 parser.add_argument('--optimize', action='store_true',
-                    help='CSV database with loads timeseries')
-parser.add_argument('--plot-voltage', action='store_true',
-                    help='CSV database with loads timeseries')
-parser.add_argument('--plot-load', action='store_true',
                     help='CSV database with loads timeseries')
 parser.add_argument('--optimize-cycle', type=int,
                     help='CSV database with loads timeseries',
@@ -87,8 +82,6 @@ with_pv = args.with_pv
 CSV_FILE = args.csv_file
 JSON_FILE = args.json_file
 with_optimize = args.optimize
-plot_voltage = args.plot_voltage
-plot_load = args.plot_load
 optimize_cycle = args.optimize_cycle
 pp_cycle = args.pp_cycle
 optimizer = args.optimizer
@@ -103,38 +96,27 @@ curves.drop(curves[curves['timestamp']>=249].index, inplace=True)
 curves.reset_index(drop=True, inplace=True)
 curves['timestamp'] = curves['timestamp'] - curves.iloc[0, 0]
 
-# logger_a will log all allocations and measurements received by the allocator
-# logger_b will log all allocations and measurements known by each node
-# logger_a = None
-logger_n = None
+logger = None
 
 if output is not '':
-    # logger_a = logging.getLogger('SmartGridSimulationA')
-    # logger_a.setLevel(logging.INFO)
-    logger_n = logging.getLogger('SmartGridSimulationN')
-    logger_n.setLevel(logging.INFO)
-    # fh_a = logging.FileHandler(output.split('log')[0] +'a.log', mode='w')
-    # fh_a.setLevel(logging.INFO)
-    fh_n = logging.FileHandler(output, mode='w')
-    fh_n.setLevel(logging.INFO)
-    # logger_a.addHandler(fh_a)
-    logger_n.addHandler(fh_n)
+    logger = logging.getLogger('SmartGridSimulationN')
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(output, mode='w')
+    fh.setLevel(logging.INFO)
+    logger.addHandler(fh)
 
 print("WITH PV: {}".format(with_pv))
 if with_optimize:
     print("WITH OPTIMIZER: {}".format(optimizer))
     print("WITH OPTIMIZE CYCLE: {}".format(optimize_cycle))
 print("PP CYCLE: {}".format(pp_cycle))
-print("WITH PLOT: {}".format(plot_voltage))
 print("SIM TIME: {}s".format(simtime))
 print("INITIAL ADDRESS {}:{}".format(address, initial_port))
 print("MAX VM_PU {}".format(max_vm))
 
-# Create SmartGridSimulation environment
-sim: SmartGridSimulation = SmartGridSimulation()
 terminate = Event()
 terminate.clear()
-# Handle ctrl-c interruptin
+# Handle ctrl-c interruption
 def shutdown(x, y):
     print("Shutdown")
     terminate.set()
@@ -165,52 +147,44 @@ def csv_generator(file, columns=None):
     filtered['duration'] = filtered['timestamp'].diff(periods=-1).abs()
     return filtered
 
-
-def generate_allocations(node, old_allocation, now=0):
-    real_now = time() - initial_time
+def generate_allocations(node):
+    initial_time = time()
     if node not in allocation_generators:
         allocation_generators[node] = \
             csv_generator(CSV_FILE,
                           columns=['%s_P' % addr_to_name[node],
                                    '%s_Q' % addr_to_name[node]])
-    # print("generating allocation for %s"%addr_to_name[node])
-    p, q, d = [0, 0, 1*accel]
-    if 'PV' in addr_to_name[node]:
+    return allocation_generators[node]
+
+def single_generate(node, old_allocation, now, name, initial_time, node_data):        
+    real_now = time() - initial_time
+    p, q, d = [0, 0, 1]
+    if 'PV' in name:
         if with_pv:
             try:
-                agen = allocation_generators[node]
-                agen = agen.iloc[int(real_now)]
-                t, p, q, d = agen
+                t, p, q, d = node_data.iloc[int(real_now)]
             except Exception as e:
                 print(e)
                 shutdown(0,0)
                 pass
     else:
         try:
-            t, p, q, d = allocation_generators[node][allocation_generators[node][0]>=real_now][0]
+            t, p, q, d = node_data.iloc[int(real_now)]
         except Exception as e:
+            print(e)
             pass
-    allocation = Allocation(0, p*p_factor, q, 1)
-    return allocation
+    return Allocation(0, p, q, 1)
 
-
-def joined_network(src, dst):
-    # print("{} joined network".format(src))
-    network_size.append(src)
-    if len(network_size) == len(nodes) and len(nodes) != 0:
-        network_ready.put(1)
-
-
-def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
+def node_allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     # We receive node_addr as "X.X.X.X:YYYY"
     # ind also identifies the node in pandapawer loads list
     # print("Node %s updated allocation"%node_addr)
     try:
         allocations_queue.put(
-            [timestamp, node_addr, allocation.p_value, allocation.q_value])
+            [time(), node_addr, allocation.p_value, allocation.q_value])
         measure = measure_queues[node_addr].get_nowait()
-        # if logger_n is not None:
-        #     logger_n.info('{}\t{}\t{}\t{}\t{}'.format(
+        # if logger is not None:
+        #     logger.info('{}\t{}\t{}\t{}\t{}'.format(
         #         time(), addr_to_name[node_addr], allocation.p_value, allocation.q_value, measure))
         return measure
     except Empty:
@@ -218,7 +192,7 @@ def allocation_updated(allocation: Allocation, node_addr: str, timestamp):
     except Exception as e:
         print("Error in allocation_updated: {}".format(e))
 
-# Collects allocator's received measures
+# Collects received measures at allocator
 def allocator_measure_updated(allocation: list, node_addr: str):
     # we receive a list containing current PQ values and Voltage measure
     # v = allocation[1]
@@ -227,30 +201,29 @@ def allocator_measure_updated(allocation: list, node_addr: str):
         voltage_values.put_nowait([node_addr, allocation])
     except Full:
         print("voltage_values is full")
-    # if logger_a is not None:
-    #     logger_a.info('{}\t{}\t{}\t{}\t{}'.format(
-    #         time(), addr_to_name[node_addr], allocation[0].p_value, allocation[0].q_value, v))
 
-# REMOTES = {0:"10.10.10.119", 1:"10.10.10.228", 2:"10.10.10.10"}
-from pylxd import Client
-client = Client()
-for c in client.containers.all():
-    c.start()
-REMOTES=[c.state().network['eth0']['addresses'][0]['address'] for c in client.containers.all()]
+# Create SmartGridSimulation environment
+sim: SmartGridSimulation = SmartGridSimulation()
+
+REMOTES = {1:"10.10.10.144", 2:"10.10.10.45", 3:"10.10.10.88"}
+# from pylxd import Client
+# client = Client()
+# for c in client.containers.all():
+#     c.start()
+# REMOTES=[c.state().network['eth0']['addresses'][0]['address'] for c in client.containers.all()]
 
 def create_nodes(net, remote):
     # Create remote agents of type NetworkLoad
     for i in range(len(net.load.index)):
         node = None
-        if i < len(REMOTES):
+        if i in REMOTES:
             node,_ = sim.create_remote_node(hostname=REMOTES[i], username='ubuntu', keyfile='~/.ssh/id_rsa.pub', ntype='load', addr='{}:{}'.format(address, next(port)))
         else:
             node = sim.create_node('load', '{}:{}'.format(address, next(port)))
         node.update_measure_period = 1
         node.report_measure_period = 1        
         measure_queues[node.local] = Queue(maxsize=1)
-        node.update_measure_cb = allocation_updated
-        node.joined_callback = joined_network
+        node.update_measure_cb = node_allocation_updated
         addr_to_name[node.local] = net.load['name'][i]
         if 'PV' in net.load['name'][i]:
             net.load['controllable'][i] = True
@@ -259,32 +232,44 @@ def create_nodes(net, remote):
             net.load['min_q_kvar'][i] = 0
             net.load['max_q_kvar'][i] = 0
             pp.create_polynomial_cost(net, i, 'load', np.array([1, 0]))
-
         net.load['name'][i] = "{}".format(node.local)        
         allocation = Allocation(
             0,
             net.load.loc[net.load['name'] == node.local, 'p_kw'].item(),
             net.load.loc[net.load['name'] == node.local, 'q_kvar'].item(),
             1)
-        if i < len(REMOTES):
-            node.curr_allocation = sim.deliver(allocation)
-            node.generate_allocations = sim.teleport(generate_allocations)
+        if i in REMOTES:
+            ## 
+            # What happens here is that, we try to reduce rpyc traffic, thus network latency that happens when remote nodes call local allocations generators
+            # To do that, I first generate all the data needed for the remote node, and `deliver` it to where the node is.
+            # Secondly, I `teleport` the `single_generate` function body, which will result in it being re-defined in the remote python context created by RPyC.
+            # The remote single_generate will be hooked to the remote node's generate_allocations callback, so that no actual remote calls are made to get new allocations.
+
+            node.curr_allocation = sim.deliver(node.____conn__, allocation)
+            data = generate_allocations(node.local)
+            # Can't deliver pandas DataFrames, data has to be convert to dict.
+            node.____conn__.namespace['node_data'] = sim.deliver(node.____conn__, data.to_dict())
+            node.____conn__.namespace['single_generate'] = sim.teleport(node.____conn__, single_generate)
+            node.____conn__.execute("from time import monotonic as time")
+            node.____conn__.execute("from functools import partial")
+            node.____conn__.execute("from asgrids import Allocation")
+            # recreating data as a DataFrame to be used inside `single_generate`
+            node.____conn__.execute("import pandas as pd")
+            node.____conn__.execute("node_data=pd.DataFrame(node_data)")
+            try:
+                node.____conn__.execute(f"partial_single_generate = partial(single_generate, name='{addr_to_name[node.local]}', initial_time=time(), node_data=node_data)")
+                node.generate_allocations = node.____conn__.namespace['partial_single_generate']
+            except Exception as e:
+                print(e)
+
         else:
             node.curr_allocation = allocation
-            node.generate_allocations = generate_allocations
+            node_data = generate_allocations(node.local)
+            node.generate_allocations = functools.partial(single_generate, name=addr_to_name[node.local], initial_time=time(), node_data=node_data)
         nodes.append(node)
         
-    for node in nodes:
-        node.run()
-        packet = Packet('join_ack', src=allocator.local, dst=node.local)
-        node.handle_receive(packet)
     return nodes
 
-
-allocator = sim.create_node(
-    ntype='allocator', addr="{}:{}".format(address, next(port)))
-allocator.identity = allocator.local
-allocator.run()
 
 net = pp.from_json(JSON_FILE)
 net.bus['min_vm_pu'] = 2 - max_vm
@@ -296,13 +281,11 @@ net.load['max_q_kvar'] = None
 net.load['controllable'] = False
 
 
+allocator = sim.create_node(
+    ntype='allocator', addr="{}:{}".format(address, next(port)))
 nodes = create_nodes(net, allocator.local)
-if not skip_join:
-    print("waiting for {} nodes to join network".format(len(nodes)))
-    network_ready.get()
-print("Network ready")
-initial_time = time()
 allocator.allocation_updated = allocator_measure_updated
+initial_time = sim.start()
 
 def worker_pp(fn, args: list, cycle: float):
     import sys, traceback
@@ -312,9 +295,6 @@ def worker_pp(fn, args: list, cycle: float):
             fn(*args)
             lock.release()
         except Exception as e:
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            print("What the fuck at worker_pp:")
-            print(repr(traceback.format_tb(exc_traceback)))
             print(e)
             return
         if cycle > 0:
@@ -330,36 +310,25 @@ def worker_optimize(fn, args: list, cycle: float):
         try:
             fn(*ARGS)
         except Exception as e:
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            print("What the fuck at {}:".format(fn))
-            print(repr(traceback.format_tb(exc_traceback)))
+            print(e)
             break
         if cycle > 0:
             sleep(cycle)
     print("Terminating {}".format(fn))
 
-allocator.schedule(shutdown, args=[None, None], delay=simtime*accel)
+allocator.schedule(shutdown, args=[None, None], delay=simtime)
 with Executor(max_workers=200) as executor:
     try:
-        # net_copy = deepcopy(net)
         print("Running power flow analysis")
-        executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, plot_values, plot_voltage, initial_time, logger_n], pp_cycle*accel)
+        executor.submit(worker_pp, sim.runpp, [net, allocations_queue, measure_queues, initial_time, logger], pp_cycle)
         if with_optimize:
-            # net_copy = deepcopy(net)
             if optimizer == 'pi':
                 print("Optimizing network in realtime with PI")
-                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle*accel, max_vm], optimize_cycle*accel)
+                executor.submit(worker_optimize, sim.optimize_network_pi, [allocator, voltage_values, optimize_cycle, max_vm], optimize_cycle)
             elif optimizer == 'opf':
                 print("Optimizing network in realtime with OPF")
-                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle*accel, max_vm, opf_forecast, opf_check], optimize_cycle*accel)
+                executor.submit(worker_optimize, sim.optimize_network_opf, [allocator, voltage_values, optimize_cycle, max_vm, opf_forecast, opf_check], optimize_cycle)
             else:
                 raise ValueError("optimizer has to be either 'pi' or 'opf'")
-
     except Exception as e:
         print(e)
-    # if plot_voltage:
-    #     plot_buses = []
-    #     for row in net.bus.iterrows():
-    #         if (net.load.loc[net.load['bus'] == row[0]]['controllable'] == True).any():
-    #             plot_buses.append(row[0])
-    #     live_plot_voltage(plot_buses, plot_values, interval=10)

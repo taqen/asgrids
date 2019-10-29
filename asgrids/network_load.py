@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 from typing import Callable
-from simpy.exceptions import Interrupt
 from time import monotonic as time
 
 from .agent import Agent
@@ -110,7 +109,11 @@ class NetworkLoad(Agent):
         """
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
-            self.max_allocation = self.generate_allocations(self.local, self.curr_allocation, self.loop.time())
+            try:
+                self.max_allocation = self.generate_allocations(node=self.local, old_allocation=self.curr_allocation, now=self.loop.time())
+            except Exception as e:
+                self.logger.warning(f"Exception calling generate_allocations {e}")
+                pass
             # self.handle_allocation(self.max_allocation)
             # self.schedule(self.handle_allocation, args={'allocation': self.max_allocation})
         else:
