@@ -2,7 +2,6 @@
 
 import logging
 import queue
-from time import monotonic as time
 from abc import ABCMeta
 from heapq import heappush, heappop
 from random import Random
@@ -58,6 +57,7 @@ class Agent(object, metaclass=ABCMeta):
         self.loop = None
         self.event = None
         self.is_running = Event()
+        self.initial_time = 0
 
     @property
     def error_model(self):
@@ -93,6 +93,7 @@ class Agent(object, metaclass=ABCMeta):
         self.loop = asyncio.get_event_loop()
         self.loop.set_exception_handler(self.loop_exception_handler)
         self.is_running.set()
+        self.initial_time = self.loop.time()
         await self.event.wait()
         self.logger.info("stopped {} agent's infinite loop".format(self.type))
 

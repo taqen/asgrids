@@ -257,7 +257,7 @@ def create_nodes(net, remote):
             node.____conn__.execute("import pandas as pd")
             node.____conn__.execute("node_data=pd.DataFrame(node_data)")
             try:
-                node.____conn__.execute(f"partial_single_generate = partial(single_generate, name='{addr_to_name[node.local]}', initial_time=time(), node_data=node_data)")
+                node.____conn__.execute(f"partial_single_generate = partial(single_generate, name='{addr_to_name[node.local]}', node_data=node_data)")
                 node.generate_allocations = node.____conn__.namespace['partial_single_generate']
             except Exception as e:
                 print(e)
@@ -265,7 +265,7 @@ def create_nodes(net, remote):
         else:
             node.curr_allocation = allocation
             node_data = generate_allocations(node.local)
-            node.generate_allocations = functools.partial(single_generate, name=addr_to_name[node.local], initial_time=time(), node_data=node_data)
+            node.generate_allocations = functools.partial(single_generate, name=addr_to_name[node.local], node_data=node_data)
         nodes.append(node)
         
     return nodes

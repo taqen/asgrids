@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 
 from typing import Callable
-from time import monotonic as time
 
 from .agent import Agent
 from .defs import Allocation, Packet
 
 
 class NetworkLoad(Agent):
-    def __init__(self, local=None, remote=None, mode='udp'):
+    def __init__(self, local=None, remote=None, mode='udp', stdout=None):
+        if stdout:
+            import sys
+            sys.stdout = stdout
         super(NetworkLoad, self).__init__(mode=mode)
         self.remote = remote
         self.nid = self.local
@@ -110,7 +112,7 @@ class NetworkLoad(Agent):
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
             try:
-                self.max_allocation = self.generate_allocations(node=self.local, old_allocation=self.curr_allocation, now=self.loop.time())
+                self.max_allocation = self.generate_allocations(node=self.local, old_allocation=self.curr_allocation, now=self.loop.time()-self.initial_time)
             except Exception as e:
                 self.logger.warning(f"Exception calling generate_allocations {e}")
                 pass
@@ -127,8 +129,10 @@ class NetworkLoad(Agent):
     def update_measure(self):
         if self.update_measure_cb is not None:
             try:
-                allocation = min(self.curr_allocation, self.max_allocation) if self.curr_allocation.p_value >=0 else max(self.curr_allocation, self.max_allocation)
-                measure = self.update_measure_cb(allocation, self.local, time())
+                allocation = min(self.curr_allocation, self.max_allocation) if self.curr_allocation.p_value >=0 else max(self.curr_allocation, self.max_allocation)    
+                assert self.initial_time > 0                
+                now = self.loop.time()-self.initial_time
+                measure = self.update_measure_cb(allocation, self.local, now)
             except Exception as e:
                 self.logger.warning("Couldn't update measure: {}".format(e))
             if measure is not None:# and measure > self.curr_measure:

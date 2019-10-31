@@ -57,18 +57,25 @@ class SmartGridSimulation(object):
         conn.execute("sys.path.append('{}')".format(python_pkg_path))
         try:
             conn.execute('import asgrids')
-        except ModuleNotFoundError as e:
+        except Exception as e:
+            print(e)
             # Making sure all asgrids requirements are installed remotely
             curr_path = os.path.dirname(os.path.realpath(__file__))
-            remote_machine["pip"]["install"]["--user"]["-U"]["pip"]()
-            with open("{}/requirements.txt".format(curr_path[:-8]), 'r') as fp:
+            pkgs = ""
+            # remote_machine["pip"]["install"]["--user"]["-U"]["pip"]()
+            with open(f"{curr_path[:-8]}/requirements.txt", 'r') as fp:
                 for cnt, pkgname in enumerate(fp):
-                    remote_machine["pip"]["install"]["--user"]["{}".format(pkgname)]()
+                    pkgs = f" {pkgname}"
+                    # remote_machine["pip"]["install"]["--user"]["{}".format(pkgname)]()
+            remote_machine.popen(f"pip install --user {pkgs}")
             rpyc.classic.upload_package(
                 conn, asgrids, os.path.join(python_pkg_path, "asgrids"))
             remote_server.close()
+            conn.close()
             remote_server = DeployedServer(remote_machine)
             conn = remote_server.classic_connect()
+            conn.execute("import sys")
+            conn.execute("sys.path.append('{}')".format(python_pkg_path))
         
         return remote_server, conn
 
@@ -81,6 +88,8 @@ class SmartGridSimulation(object):
     def create_remote_node(self, hostname, username, keyfile, ntype, addr):
         remote_machine = SshMachine(
             host=hostname, user=username, keyfile=keyfile)
+        PATH = remote_machine.env["PATH"]
+        remote_machine.env["PATH"]=f"/home/{username}/.local/bin:{PATH}"
         remote_server, conn = self.check_remote(remote_machine, username)
         self.remote_machines.append(remote_machine)
         self.remote_servers.append(remote_server)
