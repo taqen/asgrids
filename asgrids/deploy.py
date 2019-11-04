@@ -86,8 +86,12 @@ class SmartGridSimulation(object):
     """
 
     def create_remote_node(self, hostname, username, keyfile, ntype, addr):
-        remote_machine = SshMachine(
-            host=hostname, user=username, keyfile=keyfile)
+        try:
+            remote_machine = SshMachine(
+                host=hostname, user=username, keyfile=keyfile)
+        except Exception as e:
+            print(e)
+            raise(e)
         PATH = remote_machine.env["PATH"]
         remote_machine.env["PATH"]=f"/home/{username}/.local/bin:{PATH}"
         remote_server, conn = self.check_remote(remote_machine, username)
