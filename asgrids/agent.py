@@ -6,12 +6,15 @@ from abc import ABCMeta
 from heapq import heappush, heappop
 from random import Random
 from threading import Thread, Event
-
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import uvloop
 from .async_udp_communication import AsyncUdp
 from .async_communication import AsyncCommunication
 from .defs import Packet
 
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 logger = logging.getLogger(__name__)
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -89,11 +92,16 @@ class Agent(object, metaclass=ABCMeta):
         self.comm._callback = value
 
     async def agent_loop(self):
-        self.event = asyncio.Event()
-        self.loop = asyncio.get_event_loop()
-        self.loop.set_exception_handler(self.loop_exception_handler)
-        self.is_running.set()
-        self.initial_time = self.loop.time()
+        try:
+            self.event = asyncio.Event()
+            self.executor = ThreadPoolExecutor(max_workers=8)
+            self.loop = asyncio.get_event_loop()
+            self.loop.set_default_executor(self.executor)
+            self.loop.set_exception_handler(self.loop_exception_handler)
+            self.is_running.set()
+            self.initial_time = self.loop.time()
+        except Exception as e:
+            self.logger.warning(e)
         await self.event.wait()
         self.logger.info("stopped {} agent's infinite loop".format(self.type))
 
@@ -109,7 +117,10 @@ class Agent(object, metaclass=ABCMeta):
 
     def _run(self):
         self.logger.info("started {} agent's infinite loop".format(self.type))
-        asyncio.run(self.agent_loop())
+        try:
+            asyncio.run(self.agent_loop())
+        except Exception as e:
+            self.logger.warning(f"Error starting {self.local} agent_loop: {e}")
 
     async def call_later(self, delay, action, args):
         await asyncio.sleep(delay)
@@ -135,9 +146,6 @@ class Agent(object, metaclass=ABCMeta):
         self.logger.debug("scheduling {} after {} seconds".format(action, delay))
         try:
             coro = self.call_later(delay, action, args)
-        except Exception as e:
-            self.logger.debug(f'The coroutine raised an exception: {e!r}')
-        try:
             event = asyncio.run_coroutine_threadsafe(coro, self.loop)
         except Exception as e:
             if self.loop.is_running():
@@ -148,6 +156,18 @@ class Agent(object, metaclass=ABCMeta):
         for cb in callbacks:
             event.add_done_callback(cb)
         return event
+
+    def schedule_thread(self, action, callback=None):
+        async def execute(action):
+            result = await self.loop.run_in_executor(None, action)
+            return result
+        try:
+            coro = execute(action)
+            event = asyncio.run_coroutine_threadsafe(coro, self.loop)
+            if callback is not None:
+                event.add_done_callback(callback)
+        except Exception as e:
+            self.logger.warning(f"Error in thread_execute: {e}")
 
     def stop(self):
         """ stop the Agent by interrupted the loop"""
@@ -189,4 +209,4 @@ class Agent(object, metaclass=ABCMeta):
         raise NotImplementedError("must override receive_handle")
 
     def loop_exception_handler(self, obj, context):
-        self.logger.debug(context['message'])
+        self.logger.warning(context)

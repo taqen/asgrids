@@ -148,7 +148,6 @@ def csv_generator(file, columns=None):
     return filtered
 
 def generate_allocations(node):
-    initial_time = time()
     if node not in allocation_generators:
         allocation_generators[node] = \
             csv_generator(CSV_FILE,
@@ -156,32 +155,31 @@ def generate_allocations(node):
                                    '%s_Q' % addr_to_name[node]])
     return allocation_generators[node]
 
-def single_generate(node, old_allocation, now, name, initial_time, node_data):        
-    real_now = time() - initial_time
+def single_generate(node, old_allocation, now, name, node_data):
     p, q, d = [0, 0, 1]
     if 'PV' in name:
         if with_pv:
             try:
-                t, p, q, d = node_data.iloc[int(real_now)]
+                t, p, q, d = node_data.iloc[int(now)]
             except Exception as e:
-                print(e)
+                print(f"Error in single_generate at {node} for now={now}: {e}")
                 shutdown(0,0)
                 pass
     else:
         try:
-            t, p, q, d = node_data.iloc[int(real_now)]
+            t, p, q, d = node_data.iloc[int(now)]
         except Exception as e:
-            print(e)
+            print(f"Error in single_generate at {node} for now={now}: {e}")
             pass
     return Allocation(0, p, q, 1)
 
-def node_allocation_updated(allocation: Allocation, node_addr: str, timestamp):
+def node_allocation_updated(allocation: Allocation, node_addr: str, timestamp: float):
     # We receive node_addr as "X.X.X.X:YYYY"
     # ind also identifies the node in pandapawer loads list
     # print("Node %s updated allocation"%node_addr)
     try:
         allocations_queue.put(
-            [time(), node_addr, allocation.p_value, allocation.q_value])
+            [timestamp, node_addr, allocation.p_value, allocation.q_value])
         measure = measure_queues[node_addr].get_nowait()
         # if logger is not None:
         #     logger.info('{}\t{}\t{}\t{}\t{}'.format(

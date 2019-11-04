@@ -4,6 +4,7 @@
 from .agent import Agent
 from .defs import EventId, Packet, Allocation
 from itertools import count
+from functools import partial
 
 class NetworkAllocator(Agent):
     # Simulate a communicating policy allocator
@@ -91,7 +92,7 @@ class NetworkAllocator(Agent):
                 msg = "{} - updated allocation from {} to {}".format(msg, self.nodes[nid], allocation)
                 if callable(self.allocation_updated):
                     try:
-                        self.allocation_updated(allocation, nid)
+                        self.schedule_thread(partial(self.allocation_updated, allocation, nid))
                     except Exception as e:
                         self.logger.warning("Failed calling allocation_updated({}, {}): {}".format(allocation, nid, e))
 

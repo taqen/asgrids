@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from typing import Callable
+from functools import partial
 
 from .agent import Agent
 from .defs import Allocation, Packet
@@ -37,7 +38,6 @@ class NetworkLoad(Agent):
         self.get_allocation_event = None
         self.update_measure_event = None
         self.max_allocation = Allocation(p_value=float("inf"), q_value=float("inf"))
-        self.max_allocation = Allocation(p_value=float("inf"), q_value=float("inf"))
 
     def run(self):
         super(NetworkLoad, self).run()
@@ -72,7 +72,7 @@ class NetworkLoad(Agent):
             if self.join_ack_timer:
                 self.interrupt_event(self.join_ack_timer)
             if self.joined_callback is not None:
-                self.joined_callback(self.local, self.remote)
+                self.schedule_thread(partial(self.joined_callback, self.local, self.remote))
         elif msg_type == 'allocation':
             allocation = None
             if isinstance(p.payload, Allocation):
@@ -109,10 +109,19 @@ class NetworkLoad(Agent):
         """ Tries to query an allocations source for a new allocation
         The new allocation will also be saved as limit for eventual orders received from an allocator
         """
+        def allocation_callback(future):
+            if future.result() != None:
+                self.max_allocation = future.result()
         if self.generate_allocations is not None:
             self.logger.info("Scheduling allocation generation")
             try:
-                self.max_allocation = self.generate_allocations(node=self.local, old_allocation=self.curr_allocation, now=self.loop.time()-self.initial_time)
+                self.schedule_thread(
+                    partial(
+                        self.generate_allocations,
+                        node=self.local,
+                        old_allocation=self.curr_allocation,
+                        now=self.loop.time()-self.initial_time),
+                    allocation_callback)
             except Exception as e:
                 self.logger.warning(f"Exception calling generate_allocations {e}")
                 pass
@@ -132,12 +141,21 @@ class NetworkLoad(Agent):
                 allocation = min(self.curr_allocation, self.max_allocation) if self.curr_allocation.p_value >=0 else max(self.curr_allocation, self.max_allocation)    
                 assert self.initial_time > 0                
                 now = self.loop.time()-self.initial_time
-                measure = self.update_measure_cb(allocation, self.local, now)
+                def measure_callback(future):
+                    try:
+                        if future.result() != None:
+                            self.curr_measure = future.result()
+                    except Exception as e:
+                        print(e)
+                self.schedule_thread(
+                    partial(
+                        self.update_measure_cb,
+                        allocation,
+                        self.local,
+                        now),
+                    measure_callback)
             except Exception as e:
                 self.logger.warning("Couldn't update measure: {}".format(e))
-            if measure is not None:# and measure > self.curr_measure:
-                self.curr_measure = measure
-                self.logger.info("New measure is {}v".format(measure))
         self.update_measure_event = self.schedule(action=self.update_measure, delay=self.update_measure_period)
 
     def report_measure(self):
